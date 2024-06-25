@@ -88,8 +88,7 @@ def rgbf_to_yuvf(rgb: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarra
 
 
 def subsample_2x2(x: jnp.ndarray) -> jnp.ndarray:
-	kernel = jnp.asarray([[0.25, 0.25], [0.25, 0.25]])
-	return jsp.signal.convolve2d(x, kernel, mode='valid')[::2, ::2]
+	return (x[0::2, 0::2] + x[0::2, 1::2] + x[1::2, 0::2] + x[1::2, 1::2]) / 4.0
 
 
 def rgbf_to_yuv420p_uint8(rgb: jnp.ndarray) -> jnp.ndarray:
