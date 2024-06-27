@@ -19,6 +19,9 @@ import numpy as np
 from tqdm import tqdm
 
 
+FTYPE = jnp.float32
+
+
 # Encoders listed by preference.
 _ENCODERS = [
 	# Apple
@@ -42,17 +45,17 @@ _X264_OPTIONS = {
 
 
 def f32_to_uint8(x: jnp.ndarray) -> jnp.ndarray:
-	assert x.dtype == jnp.float32
+	assert x.dtype == FTYPE
 	return jnp.clip(jnp.round(x * 255), min=0.0, max=255.0).astype(jnp.uint8)
 
 
 def uint8_to_f32(x: jnp.ndarray) -> jnp.ndarray:
 	assert x.dtype == jnp.uint8
-	return x.astype(jnp.float32) / 255
+	return x.astype(FTYPE) / 255
 	
 
 def yuvf_to_rgbf(y: jnp.ndarray, u: jnp.ndarray, v: jnp.ndarray) -> jnp.ndarray:
-	assert y.dtype == jnp.float32
+	assert y.dtype == FTYPE
 	width, height = y.shape[1], y.shape[0]
 
 	# Undo the subsampling if necessary.
@@ -76,7 +79,7 @@ def yuvf_to_rgbf(y: jnp.ndarray, u: jnp.ndarray, v: jnp.ndarray) -> jnp.ndarray:
 
 
 def rgbf_to_yuvf(rgb: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-	assert rgb.dtype == jnp.float32
+	assert rgb.dtype == FTYPE
 	width, height = rgb.shape[1], rgb.shape[0]
 	r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
 	y = 0.2126 * r + 0.7152 * g + 0.0722 * b
