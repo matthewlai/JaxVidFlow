@@ -11,6 +11,8 @@ if platform.system() == 'Darwin':
 	# Required for Jax on Metal (https://developer.apple.com/metal/jax/):
 	os.environ['ENABLE_PJRT_COMPATIBILITY'] = '1'
 
+os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
+
 import av
 import jax
 from jax import numpy as jnp
@@ -37,7 +39,7 @@ _ENCODERS = [
 
 
 # Force x264 software H264 encoder at veryfast preset (for testing).
-_FORCE_X264 = True
+_FORCE_X264 = False
 _X264_OPTIONS = {
 	'preset': 'superfast',
 	'crf': '24'
@@ -48,10 +50,10 @@ def f32_to_uint8(x: jnp.ndarray) -> jnp.ndarray:
 	assert x.dtype == FTYPE
 	return jnp.clip(jnp.round(x * 255), min=0.0, max=255.0).astype(jnp.uint8)
 
-
-def uint8_to_f32(x: jnp.ndarray) -> jnp.ndarray:
-	assert x.dtype == jnp.uint8
-	return x.astype(FTYPE) / 255
+@functools.partial(jax.jit, static_argnames=['max_val'])
+def uint_to_f32(x: jnp.ndarray, max_val: int) -> jnp.ndarray:
+	assert x.dtype in (jnp.uint8, jnp.uint16)
+	return x.astype(FTYPE) / max_val
 	
 
 def yuvf_to_rgbf(y: jnp.ndarray, u: jnp.ndarray, v: jnp.ndarray) -> jnp.ndarray:
@@ -77,7 +79,7 @@ def yuvf_to_rgbf(y: jnp.ndarray, u: jnp.ndarray, v: jnp.ndarray) -> jnp.ndarray:
 	b = y + 1.8556 * u
 	return jnp.clip(jnp.stack((r, g, b), axis=2), min=0.0, max=1.0)
 
-
+@jax.jit
 def rgbf_to_yuvf(rgb: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
 	assert rgb.dtype == FTYPE
 	width, height = rgb.shape[1], rgb.shape[0]
@@ -87,13 +89,13 @@ def rgbf_to_yuvf(rgb: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarra
 	v = 0.5 * r + -0.4542 * g + -0.0458 * b
 	u += 0.5
 	v += 0.5
-	return (jnp.clip(x, min=0.0, max=1.0) for x in (y, u, v))
+	return tuple(jnp.clip(x, min=0.0, max=1.0) for x in (y, u, v))
 
 
 def subsample_2x2(x: jnp.ndarray) -> jnp.ndarray:
-	return (x[0::2, 0::2] + x[0::2, 1::2] + x[1::2, 0::2] + x[1::2, 1::2]) / 4.0
+	return x[0::2, 0::2]
 
-
+@jax.jit
 def rgbf_to_yuv420p_uint8(rgb: jnp.ndarray) -> jnp.ndarray:
 	y, u, v = rgbf_to_yuvf(rgb)
 	u = subsample_2x2(u)
@@ -101,19 +103,22 @@ def rgbf_to_yuv420p_uint8(rgb: jnp.ndarray) -> jnp.ndarray:
 	y, u, v = f32_to_uint8(y), f32_to_uint8(u), f32_to_uint8(v)
 	return jnp.concatenate([y.reshape(-1), u.reshape(-1), v.reshape(-1)]).reshape(-1, y.shape[1])
 
-
 @jax.jit
-def process_frame(y: jnp.ndarray, u: jnp.ndarray, v: jnp.ndarray) -> jnp.ndarray:
-	y, u, v = (uint8_to_f32(plane) for plane in (y, u, v))
+def normalize(rgb: jnp.ndarray) -> jnp.ndarray:
+	max_r = jnp.max(rgb[:, :, 0]) + 0.001
+	max_g = jnp.max(rgb[:, :, 1]) + 0.001
+	max_b = jnp.max(rgb[:, :, 2]) + 0.001
+	rgb = rgb.at[:, :, 0].multiply(1.0 / max_r)
+	rgb = rgb.at[:, :, 1].multiply(1.0 / max_g)
+	rgb = rgb.at[:, :, 2].multiply(1.0 / max_b)
+	return rgb
+
+@functools.partial(jax.jit, static_argnames=['bits'])
+def process_frame(y: jnp.ndarray, u: jnp.ndarray, v: jnp.ndarray, bits: int) -> jnp.ndarray:
+	y, u, v = (uint_to_f32(plane, max_val=2**bits - 1) for plane in (y, u, v))
 	frame = yuvf_to_rgbf(y, u, v)
-	max_r = jnp.max(frame[:, :, 0]) + 0.001
-	max_g = jnp.max(frame[:, :, 1]) + 0.001
-	max_b = jnp.max(frame[:, :, 2]) + 0.001
-	frame = frame.at[:, :, 0].multiply(1.0 / max_r)
-	frame = frame.at[:, :, 1].multiply(1.0 / max_g)
-	frame = frame.at[:, :, 2].multiply(1.0 / max_b)
-	
-	return rgbf_to_yuv420p_uint8(frame)
+	frame = normalize(frame)
+	return frame
 
 
 def find_best_encoder() -> tuple[str, Any]:
@@ -158,21 +163,32 @@ def main():
 	for frame_i, frame in tqdm(enumerate(itertools.chain(in_container.decode(video=0), [None])), unit=' frames'):
 		# Get a decoded frame.
 		if frame is not None:
+			bits = 0
+			if frame.format.name in ('yuv420p', 'yuvj420p'):
+				bits = 8
+			elif frame.format.name in ('yuv420p10le'):
+				bits = 10
+			else:
+				print(f'Unknwon frame format: {frame.format.name}')
+				return
+			dtype = jnp.uint8 if bits == 8 else jnp.uint16
 			# Reading from video planes directly saves an extra copy in VideoFrame.to_ndarray.
-			assert frame.format.name in ('yuv420p', 'yuvj420p')
-			y, u, v = (jnp.frombuffer(frame.planes[i], jnp.uint8) for i in range(3))
+			# Planes should be in machine byte order, which should also be what frombuffer() expects.
+			y, u, v = (jnp.frombuffer(frame.planes[i], dtype) for i in range(3))
 			width, height = frame.width, frame.height
 			y = jnp.reshape(y, (height, width))
 			u = jnp.reshape(u, (height // 2, width // 2))
 			v = jnp.reshape(v, (height // 2, width // 2))
 
 			# Submit a processing call to the GPU.
-			frame_data_next = process_frame(y, u, v)
+			frame_data_next = rgbf_to_yuv420p_uint8(process_frame(y, u, v, bits))
 
 		# Encode the last frame, if it exists. We delay the processing by one frame to not
 		# force the GPU to be idle while we call encode.
 		if frame_data_last is not None:
-			new_frame = av.VideoFrame.from_ndarray(frame_data_last, format='yuv420p')
+			# Materialize the data into numpy at the last moment.
+			frame_data_last = np.array(frame_data_last)
+			new_frame = av.VideoFrame.from_numpy_buffer(frame_data_last, format='yuv420p')
 			for packet in out_video_stream.encode(new_frame):
 				out_container.mux(packet)
 
