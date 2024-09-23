@@ -1,5 +1,6 @@
 import functools
 import itertools
+import math
 import os
 import platform
 import queue
@@ -17,6 +18,7 @@ import av
 import jax
 from jax import numpy as jnp
 from jax import scipy as jsp
+from jax.sharding import PartitionSpec as P
 import numpy as np
 from tqdm import tqdm
 
@@ -40,10 +42,17 @@ _ENCODERS = [
 
 # Force x264 software H264 encoder at veryfast preset (for testing).
 _FORCE_X264 = False
+_FORCE_CPU = False
+
 _X264_OPTIONS = {
 	'preset': 'superfast',
 	'crf': '24'
 }
+
+
+# Force CPU for testing.
+if _FORCE_CPU:
+	jax.config.update('jax_platform_name', 'cpu')
 
 
 def f32_to_uint8(x: jnp.ndarray) -> jnp.ndarray:
@@ -145,6 +154,9 @@ def main():
 		out_codec, out_codec_options = 'h264', _X264_OPTIONS
 	else:
 		out_codec, out_codec_options = find_best_encoder()
+
+	num_devices = len(jax.local_devices())
+	print(f'Have {num_devices} device(s)')
 
 	in_width = in_video_stream.codec_context.width
 	in_height = in_video_stream.codec_context.height
