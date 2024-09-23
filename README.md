@@ -33,9 +33,8 @@ pip3 install jax
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 brew install python3
 
-# Install ffmpeg (default is version 7 as of this writing, which is not supported by PyAV, so we force version 6).
-brew install ffmpeg@6 pkg-config
-brew link ffmpeg@6
+# Install ffmpeg.
+brew install ffmpeg pkg-config
 
 # Setup a virtual environment (optional).
 python3 -m venv venv
