@@ -1,4 +1,5 @@
 test_out.mp4
+*.sublime-workspace
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

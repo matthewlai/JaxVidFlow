@@ -54,20 +54,10 @@ _X264_OPTIONS = {
 if _FORCE_CPU:
   jax.config.update('jax_platform_name', 'cpu')
 
-@jax.jit
-def normalize(rgb: jnp.ndarray) -> jnp.ndarray:
-  max_r = jnp.max(rgb[:, :, 0]) + 0.001
-  max_g = jnp.max(rgb[:, :, 1]) + 0.001
-  max_b = jnp.max(rgb[:, :, 2]) + 0.001
-  rgb = rgb.at[:, :, 0].multiply(1.0 / max_r)
-  rgb = rgb.at[:, :, 1].multiply(1.0 / max_g)
-  rgb = rgb.at[:, :, 2].multiply(1.0 / max_b)
-  return rgb
 
 @functools.partial(jax.jit, static_argnames=['frame_format'])
 def process_frame(raw_frame, frame_format: str) -> jnp.ndarray:
   frame = VideoReader.DecodeFrame(raw_frame, frame_format)
-  frame = normalize(frame)
   return VideoWriter.EncodeFrame(frame)
 
 

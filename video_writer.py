@@ -66,7 +66,7 @@ class VideoWriter:
     y = jnp.clip(y, min=0.0, max=1.0)
 
     # Then we subsample U and V. Take upper left for now. This may or may not be standard, but close enough.
-    u, v = u[0::2], v[0::2]
+    u, v = u[0::2, 0::2], v[0::2, 0::2]
     u = jnp.clip(u, min=0.0, max=1.0)
     v = jnp.clip(v, min=0.0, max=1.0)
 
