@@ -10,10 +10,10 @@ def undo_2x2subsample(x: jnp.ndarray) -> jnp.ndarray:
   # doing linear interpolation.
   
   # Approach 1:
-  newshape = list(x.shape)
-  newshape[-1] *= 2
-  newshape[-2] *= 2
-  return jax_image.resize(x, newshape, method='linear')
+  # newshape = list(x.shape)
+  # newshape[-1] *= 2
+  # newshape[-2] *= 2
+  # return jax_image.resize(x, newshape, method='linear')
 
   # Approach 2 (just duplicate pixels - fast but not very good!):
   width, height = x.shape[-1] * 2, x.shape[-2] * 2
