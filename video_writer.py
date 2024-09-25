@@ -6,21 +6,34 @@ from jax import numpy as jnp
 import numpy as np
 
 class VideoWriter:
-  def __init__(self, filename: str, width: int, height: int, frame_rate: float, pixfmt: str,
+  def __init__(self, filename: str, frame_rate: float, pixfmt: str,
          codec_name: str, codec_options: dict[str, str] | None):
     self.out_container = av.open(filename, 'w')
     self.out_video_stream = self.out_container.add_stream(
       codec_name=codec_name, rate=frame_rate, options=codec_options)
-    self.out_video_stream.width = width
-    self.out_video_stream.height = height
     self.out_video_stream.pix_fmt = pixfmt
     self.out_codec_context = self.out_video_stream.codec_context
 
     # When we write frames we delay by one to prevent a GPU sync.
     self.last_frame = None
 
+    self.waiting_for_first_frame = True
+
   def add_frame(self, encoded_frame: jnp.ndarray | np.ndarray | None):
     """Add a raw frame already encoded using EncodeFrame()."""
+    if self.waiting_for_first_frame:
+      self.waiting_for_first_frame = False
+      # Get width and height from the frame.
+
+      # Here the frame has already been encoded in a stacked way that libAV expects, with
+      # shape[0] = height (y) + height / 4 (u) + height / 4 (v)
+      # shape[1] = width
+      width = encoded_frame.shape[1]
+      height = encoded_frame.shape[0] * 4 // 6
+
+      self.out_video_stream.width = width
+      self.out_video_stream.height = height
+
     if self.last_frame is not None:
       frame_data_last = np.array(self.last_frame)
       new_frame = av.VideoFrame.from_numpy_buffer(frame_data_last, format=self.frame_format())
