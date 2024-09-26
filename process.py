@@ -1,4 +1,5 @@
 import functools
+import logging
 import math
 import os
 import platform
@@ -21,11 +22,17 @@ from jax import scipy as jsp
 import numpy as np
 from tqdm import tqdm
 
+import colourspaces
 from config import Config
 import lut
 import utils
 from video_reader import VideoReader
 from video_writer import VideoWriter
+
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(encoding='utf-8', level=logging.INFO,
+                    format='%(asctime)s.%(msecs)04d:%(filename)s:%(funcName)s:%(lineno)s:%(levelname)s: %(message)s',)
 
 
 LUT_PATH='lut/D_LOG_M_to_Rec_709_LUT_ZG_Rev1.cube'
@@ -42,9 +49,14 @@ def normalize(x: jnp.ndarray):
 # ffmpeg -i test_files/dolphin_4096.mp4 -vf "lut3d=file=lut/D_LOG_M_to_Rec_709_LUT_ZG_Rev1.cube:interp=trilinear,normalize,format=yuv420p" -c:v hevc_nvenc -f null -
 @functools.partial(jax.jit, static_argnames=['frame_format'])
 def process_frame(raw_frame, frame_format: str) -> jnp.ndarray:
-  frame = VideoReader.DecodeFrame(raw_frame, frame_format)
+  frame_in = VideoReader.DecodeFrame(raw_frame, frame_format)
+  frame = frame_in
   frame = lut.apply_lut(frame, LUT_PATH)
+  frame = colourspaces.Rec709ToLinear(frame)
   frame = normalize(frame)
+  frame = colourspaces.LinearToRec709(frame)
+  half_frame_width = frame.shape[1] // 2
+  frame = frame.at[:, 0:half_frame_width].set(frame_in[:, 0:half_frame_width])
   return VideoWriter.EncodeFrame(frame)
 
 
@@ -74,6 +86,9 @@ def main():
       frame = process_frame(raw_frame, frame_format)
 
       video_writer.add_frame(encoded_frame=frame)
+      video_writer.write_audio_packets(audio_packets=video_reader.audio_packets(),
+                                       in_audio_stream=video_reader.audio_stream())
+      video_reader.clear_audio_packets()
 
   if config.profiling:
     jax.profiler.stop_trace()

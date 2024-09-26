@@ -15,7 +15,7 @@ def apply_lut(frame: jnp.ndarray, lut_path: str) -> jnp.ndarray:
   with open(lut_path, 'r') as lut_file:
     for line in lut_file.readlines():
       if line.startswith('TITLE'):
-        title = line[7:-1]
+        title = line[7:-2]
       elif line.startswith('LUT_3D_SIZE'):
         size = int(line[12:])
       else:

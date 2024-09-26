@@ -8,9 +8,10 @@ import numpy as np
 class VideoWriter:
   def __init__(self, filename: str, frame_rate: float, pixfmt: str,
          codec_name: str, codec_options: dict[str, str] | None):
-    self.out_container = av.open(filename, 'w')
+    self.out_container = av.open(filename, 'w', options={'movflags': 'faststart'})
     self.out_video_stream = self.out_container.add_stream(
       codec_name=codec_name, rate=frame_rate, options=codec_options)
+    self.out_audio_stream = None
     self.out_video_stream.pix_fmt = pixfmt
     self.out_codec_context = self.out_video_stream.codec_context
 
@@ -18,6 +19,8 @@ class VideoWriter:
     self.last_frame = None
 
     self.waiting_for_first_frame = True
+
+    self._non_video_streams = []
 
   def add_frame(self, encoded_frame: jnp.ndarray | np.ndarray | None):
     """Add a raw frame already encoded using EncodeFrame()."""
@@ -44,6 +47,13 @@ class VideoWriter:
 
   def frame_format(self) -> str:
     return self.out_video_stream.pix_fmt
+
+  def write_audio_packets(self, audio_packets, in_audio_stream):
+    if not self.out_audio_stream:
+      self.out_audio_stream = self.out_container.add_stream(template=in_audio_stream)
+    for packet in audio_packets:
+      packet.stream = self.out_audio_stream
+      self.out_container.mux(packet)
 
   def __enter__(self):
     return self
