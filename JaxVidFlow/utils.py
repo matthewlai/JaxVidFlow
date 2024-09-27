@@ -1,6 +1,6 @@
 from typing import Sequence
 
-from video_writer import VideoWriter
+from JaxVidFlow.video_writer import VideoWriter
 
 def FindCodec(candidates: Sequence[tuple[str, dict[str, str]]]) -> tuple[str, dict[str, str]]:
   codec_name = ''

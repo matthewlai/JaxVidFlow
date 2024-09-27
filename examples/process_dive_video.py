@@ -4,6 +4,7 @@ import math
 import os
 import platform
 import queue
+import sys
 import threading
 import time
 from typing import Any, Generator, Sequence
@@ -18,16 +19,15 @@ import av
 import jax
 from jax import image as jax_image
 from jax import numpy as jnp
-from jax import scipy as jsp
 import numpy as np
 from tqdm import tqdm
 
-import colourspaces
-from config import Config
-import lut
-import utils
-from video_reader import VideoReader
-from video_writer import VideoWriter
+sys.path.append('.')
+
+from JaxVidFlow import colourspaces, lut, utils
+from JaxVidFlow.config import Config
+from JaxVidFlow.video_reader import VideoReader
+from JaxVidFlow.video_writer import VideoWriter
 
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ logging.basicConfig(encoding='utf-8', level=logging.INFO,
                     format='%(asctime)s.%(msecs)04d:%(filename)s:%(funcName)s:%(lineno)s:%(levelname)s: %(message)s',)
 
 
-LUT_PATH='lut/D_LOG_M_to_Rec_709_LUT_ZG_Rev1.cube'
+LUT_PATH='luts/D_LOG_M_to_Rec_709_LUT_ZG_Rev1.cube'
 
 
 def normalize(x: jnp.ndarray):
