@@ -22,6 +22,7 @@ from jax import numpy as jnp
 import numpy as np
 
 from JaxVidFlow import colourspaces, lut, nlmeans, utils
+from JaxVidFlow.types import FT
 from JaxVidFlow.config import Config
 from JaxVidFlow.video_reader import VideoReader
 from JaxVidFlow.video_writer import VideoWriter
@@ -114,7 +115,7 @@ def _host_to_from_gpu():
     x = rng.integers(0, 1024, shape, dtype=np.uint16)
     cpu = jax.device_put(x, jax.devices('cpu')[0]).block_until_ready()
     start_time = time.time()
-    ITERATIONS = 10
+    ITERATIONS = 100
     for _ in range(ITERATIONS):
       jax.device_put(cpu, jax.devices('gpu')[0]).block_until_ready()
     duration = time.time() - start_time
@@ -132,7 +133,7 @@ def _host_to_from_gpu():
 def _test_jax_op(fn, name='', iterations=100, input_shape=(3840, 2160, 3)):
   rng = np.random.default_rng()
   x = rng.random(input_shape, dtype=np.float32)
-  x = jax.device_put(x).block_until_ready()
+  x = jax.device_put(x).astype(FT()).block_until_ready()
   fn = jax.jit(fn)
   fn(x).block_until_ready()
   start_time = time.time()
@@ -164,8 +165,8 @@ def main():
   utils.EnablePersistentCache()
 
   default_device = jax.devices()[0]
-  is_cpu = default_device.device_kind == 'cpu'
-  print(f'Default device is: {default_device.device_kind}')
+  is_cpu = default_device.platform == 'cpu'
+  print(f'Default device is: {default_device.platform} ({default_device.device_kind})')
 
   print(_pad_to_len('Video Decode (4k)'))
   _video_decode()

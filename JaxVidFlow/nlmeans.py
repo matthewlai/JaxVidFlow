@@ -7,6 +7,7 @@ import jax.scipy as jsp
 import numpy as np
 
 from JaxVidFlow import colourspaces, lut, utils
+from JaxVidFlow.types import FT
 
 def _patch_around(img: np.ndarray, x: int, y: int, p_div_2: int) -> np.ndarray:
   min_y = y - p_div_2
@@ -112,8 +113,8 @@ def nlmeans(img: jnp.ndarray, strength: float, search_range: int, patch_size: in
 
     # We can in theory do this faster by updating the values incrementally since we have a constant kernel. However,
     # that sounds difficult to implement efficiently on GPU, and these separable 2D convs are already very fast.
-    patch_diffs = _separable_2d_conv(diff_sq, jnp.ones((patch_size, 1), dtype=jnp.float32),
-                                              jnp.ones((1, patch_size), dtype=jnp.float32))  # This is v_n in the paper.
+    patch_diffs = _separable_2d_conv(diff_sq, jnp.ones((patch_size, 1), dtype=FT()),
+                                              jnp.ones((1, patch_size), dtype=FT()))  # This is v_n in the paper.
     weights = jnp.exp(-patch_diffs * exp_scaling)
 
     # Line 5) in the pseudo-code.
