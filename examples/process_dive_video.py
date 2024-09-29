@@ -61,6 +61,9 @@ def process_frame(raw_frame, frame_format: str) -> jnp.ndarray:
 
 
 def main():
+  # Enable the persistent compilation cache so we are not recompiling every execution.
+  utils.EnablePersistentCache()
+
   # Get default configs.
   config = Config(force_cpu_backend=False)
 
@@ -83,9 +86,9 @@ def main():
       raw_frame, frame_format = frame_data
 
       # Submit a processing call to the GPU.
-      frame = process_frame(raw_frame, frame_format)
+      #frame = process_frame(raw_frame, frame_format)
 
-      video_writer.add_frame(encoded_frame=frame)
+      video_writer.add_frame(encoded_frame=raw_frame)
       video_writer.write_audio_packets(audio_packets=video_reader.audio_packets(),
                                        in_audio_stream=video_reader.audio_stream())
       video_reader.clear_audio_packets()
