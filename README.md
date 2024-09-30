@@ -6,6 +6,7 @@ Video processing pipeline using JAX. Especially suitable for experimenting with 
   * It's really hard to extend with filters. Writing high performance C code is hard, and very hardware-dependent
   * Only a handful of filters have GPU implementations, and generally using them requires very messy command line options
   * Every new CPU or GPU architecture requires new code
+  * Floating point formats not supported, requiring carefully choosing pixel formats to minimize quality loss for multi-stage processing, and different filters support different formats.
 * [JAX](https://jax.readthedocs.io/en/latest/index.html) is a high performance and very user-friendly array computing library.
   * Write simple Numpy expressions, get well-optimised native code performance on CPU/GPU/TPU
   * Very easy to implement most custom operations. As long as you can express it as matrix operations, you are 80% of the way there!
