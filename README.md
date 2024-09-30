@@ -7,9 +7,8 @@ Experimental video processing pipeline using JAX.
   * Only a handful of filters have GPU implementations, and generally using them requires very messy command line options
   * Every new CPU or GPU architecture requires new code
 * [JAX](https://jax.readthedocs.io/en/latest/index.html) is a high performance and very user-friendly array computing library.
-  * Write simple Numpy expressions
+  * Write simple Numpy expressions, get well-optimised native code performance on CPU/GPU/TPU
   * Very easy to implement most custom operations. As long as you can express it as matrix operations, you are 80% of the way there!
-  * JAX automatically traces and compiles it into high performance native CPU/GPU/TPU code
   * Code generation for:
     * CPUs (compiled into Eigen operations with good vectorization for x86, ARM, and other architectures)
     * GPU (NVIDIA CUDA is best supported, AMD ROCm experimental, Intel oneAPI also experimental, Apple Metal Performance Shaders Graph on all Apple GPUs also experimental)
