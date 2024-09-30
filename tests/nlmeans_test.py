@@ -1,5 +1,7 @@
 import sys
 
+import jax
+from jax import numpy as jnp
 import numpy as np
 import pytest
 
@@ -7,44 +9,49 @@ sys.path.append('.')
 
 from JaxVidFlow import nlmeans, utils
 
+utils.EnablePersistentCache()
+
+def _add_noise(img: np.ndarray, sigma: np.ndarray):
+	noise = np.random.normal(size=img.shape)
+	noise *= sigma  # This can be per-channel or just one sigma for all channels.
+	return np.clip(img + noise, 0.0, 1.0)
+
 def test_psnr():
 	clean = utils.LoadImage('test_files/bridge.png')
-	noisy = utils.LoadImage('test_files/bridge_noisy.png')
-	denoised = utils.LoadImage('test_files/bridge_denoised.png')
-	assert pytest.approx(nlmeans.psnr(clean, noisy), 0.01) == 28.843
-	assert pytest.approx(nlmeans.psnr(clean, denoised), 0.01) == 29.141
+	noisy = _add_noise(clean, sigma=0.15)
+	assert pytest.approx(utils.PSNR(clean, noisy), 0.01) == 17.067
+	clean = utils.LoadImage('test_files/canal.png')
+	noisy = _add_noise(clean, sigma=0.15)
+	assert pytest.approx(utils.PSNR(clean, noisy), 0.01) == 16.963
 
-@pytest.mark.skip(reason="This is really slow (as designed). We saved the image to compare against instead.")
-def test_naive_nlmeans():
+def test_estimate_sigma():
 	clean = utils.LoadImage('test_files/bridge.png')
-	noisy = utils.LoadImage('test_files/bridge_noisy.png')
-	denoised = nlmeans.naive_nlmeans(img=noisy, strength=0.1, search_range=3, patch_size=7)
-	utils.SaveImage(denoised, 'test_out/bridge_denoised.png')
-	psnr = float(nlmeans.psnr(clean, denoised))
-	assert psnr > 28.0
+	noisy = _add_noise(clean, sigma=0.15)
+	noise = float(jnp.mean(utils.EstimateNoiseSigma(noisy)))
+	assert pytest.approx(noise, abs=0.02) == 0.15
+	clean = utils.LoadImage('test_files/canal.png')
+	noisy = _add_noise(clean, sigma=0.15)
+	noise = float(jnp.mean(utils.EstimateNoiseSigma(noisy)))
+	assert pytest.approx(noise, abs=0.02) == 0.15
 
-def test_make_offsets():
-	offsets = nlmeans._make_offsets(7)
-	set_map = np.zeros((7, 7), dtype=np.uint8)
-	for row in range(offsets.shape[0]):
-		set_map[tuple(offsets[row] + 3)] = 1
-	expected = np.array(
-		[[1, 1, 1, 1, 1, 1, 1],
- 		 [1, 1, 1, 1, 1, 1, 1],
-         [1, 1, 1, 1, 1, 1, 1],
-         [1, 1, 1, 0, 0, 0, 0],
-         [0, 0, 0, 0, 0, 0, 0],
-         [0, 0, 0, 0, 0, 0, 0],
-         [0, 0, 0, 0, 0, 0, 0]], dtype=np.uint8)
-	assert (set_map == expected).all()
-
-def test_fast_nlmeans():
-	clean = utils.LoadImage('test_files/bridge.png')
-	noisy = utils.LoadImage('test_files/bridge_noisy.png')
-	denoised = nlmeans.nlmeans(img=noisy, strength=0.1, search_range=3, patch_size=7)
-	utils.SaveImage(denoised, 'test_out/bridge_denoised.png')
-	compare = np.copy(noisy)
-	compare[:, :256] = np.array(denoised[:, :256])
+def test_nlmeans():
+	clean = utils.LoadImage('test_files/canal.png')
+	noisy = _add_noise(clean, sigma=0.15)
+	denoised = nlmeans.nlmeans_patchwise(img=noisy, strength=1.2*0.15, search_range=11, patch_size=3)
+	utils.SaveImage(denoised, 'test_out/nlmeans_denoised.png')
+	compare = utils.CompareTwo(noisy, denoised)
 	utils.SaveImage(compare, 'test_out/nlmeans_compare.png')
-	psnr = float(nlmeans.psnr(clean, denoised))
+	psnr = float(utils.PSNR(clean, denoised))
 	print(f'PSNR: {psnr}')
+	assert psnr > 27.0
+
+def test_nlmeans_patchwise():
+	clean = utils.LoadImage('test_files/canal.png')
+	noisy = _add_noise(clean, sigma=0.15)
+	denoised = nlmeans.nlmeans_patchwise(img=noisy, search_range=21, patch_size=3)
+	utils.SaveImage(denoised, 'test_out/nlmeans_denoised_patchwise.png')
+	compare = utils.CompareTwo(noisy, denoised)
+	utils.SaveImage(compare, 'test_out/nlmeans_compare_patchwise.png')
+	psnr = float(utils.PSNR(clean, denoised))
+	print(f'PSNR: {psnr}')
+	assert psnr > 27.0

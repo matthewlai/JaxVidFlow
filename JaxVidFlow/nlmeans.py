@@ -1,4 +1,5 @@
 import functools
+import math
 
 import jax
 from jax import image as jax_image
@@ -9,56 +10,6 @@ import numpy as np
 from JaxVidFlow import colourspaces, lut, utils
 from JaxVidFlow.types import FT
 
-def _patch_around(img: np.ndarray, x: int, y: int, p_div_2: int) -> np.ndarray:
-  min_y = y - p_div_2
-  max_y = y + p_div_2
-  min_x = x - p_div_2
-  max_x = x + p_div_2
-  return img[min_y:max_y + 1, min_x:max_x + 1]
-
-def _inclusive_range(start: int, end: int, step: int = 1):
-  return range(start, end + 1, step)
-
-def naive_nlmeans(img: np.ndarray, strength: float, search_range: int, patch_size: int) -> np.ndarray:
-  """Simple naive non-compilable implementation of NL-means to use for testing more efficient implementations."""
-  assert search_range % 2 == 1, 'search_range must be odd'
-  assert patch_size % 2 == 1, 'patch_size must be odd'
-  p_div_2 = (patch_size - 1) // 2
-  s_div_2 = (search_range - 1) // 2
-  true_w = img.shape[1]
-  true_h = img.shape[0]
-  out_img = np.zeros_like(img)
-  padding = p_div_2 + s_div_2
-  img = np.pad(img, [(padding, padding), (padding, padding), (0, 0)], mode='edge')
-  w = img.shape[1]
-  h = img.shape[0]
-  exp_scaling = 1.0 / (strength ** 2)
-  for y in range(padding, h - padding):
-    for x in range(padding, w - padding):
-      total_weight = 0.0
-      max_weight = 0.0
-      weighted_total_new_pixel = np.zeros((img.shape[2],), dtype=np.float32)
-      this_patch = _patch_around(img, x, y, p_div_2)
-
-      for dx in _inclusive_range(-s_div_2, s_div_2):
-        for dy in _inclusive_range(-s_div_2, s_div_2):
-          if dx == 0 and dy == 0:
-            continue
-          candidate_x, candidate_y = x + dx, y + dy
-          candidate_patch = _patch_around(img, candidate_x, candidate_y, p_div_2)
-          patch_diff = candidate_patch - this_patch
-          patch_diff_sq = patch_diff ** 2
-          weight = np.mean(np.exp(-patch_diff_sq * exp_scaling))
-          weighted_total_new_pixel += img[candidate_y, candidate_x] * weight
-          total_weight += weight
-          max_weight = max(max_weight, float(weight))
-
-      # Finally, add the original pixel at the highest weight we have seen.
-      weighted_total_new_pixel += img[y, x] * max_weight
-      total_weight += max_weight
-      inv_total_weight = 1.0 / total_weight
-      out_img[y - padding, x - padding] = weighted_total_new_pixel * inv_total_weight
-  return out_img
 
 def _make_offsets(search_range: int) -> np.ndarray:
   offsets = []
@@ -87,8 +38,6 @@ def nlmeans(img: jnp.ndarray, strength: float, search_range: int, patch_size: in
   padding = p_div_2 + s_div_2
   offsets = jnp.array(_make_offsets(search_range))
 
-  exp_scaling = 1.0 / ((strength ** 2) * search_range * search_range)  # C in the paper, except we use lambda = strength ** 2
-
   def _pad(a: jnp.ndarray) -> jnp.ndarray:
     return jnp.pad(a, [(padding, padding), (padding, padding), (0, 0)], mode='edge')
 
@@ -113,9 +62,9 @@ def nlmeans(img: jnp.ndarray, strength: float, search_range: int, patch_size: in
 
     # We can in theory do this faster by updating the values incrementally since we have a constant kernel. However,
     # that sounds difficult to implement efficiently on GPU, and these separable 2D convs are already very fast.
-    patch_diffs = _separable_2d_conv(diff_sq, jnp.ones((patch_size, 1), dtype=FT()),
-                                              jnp.ones((1, patch_size), dtype=FT()))  # This is v_n in the paper.
-    weights = jnp.exp(-patch_diffs * exp_scaling)
+    patch_diffs = _separable_2d_conv(diff_sq, jnp.ones((patch_size, 1), dtype=FT()) / patch_size,
+                                              jnp.ones((1, patch_size), dtype=FT()) / patch_size)  # This is v_n in the paper.
+    weights = jnp.exp(-patch_diffs / (strength ** 2))
 
     # Line 5) in the pseudo-code.
     img_out = img_out + weights * offset_img
@@ -145,7 +94,106 @@ def nlmeans(img: jnp.ndarray, strength: float, search_range: int, patch_size: in
   return img_out
 
 
-@jax.jit
-def psnr(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
-  mse = jnp.max(jnp.array([jnp.mean((a - b) ** 2), jnp.asarray(0.0001)]))
-  return 20 * jnp.log10(1.0 / jnp.sqrt(mse))
+@functools.partial(jax.jit, static_argnames=['search_range', 'patch_size'])
+def nlmeans_patchwise(img: jnp.ndarray, search_range: int, patch_size: int,
+                      strength: jnp.ndarray | None = None, sigma: jnp.ndarray | None = None) -> jnp.ndarray:
+  """Patchwise Non-Local Means as described in https://www.ipol.im/pub/art/2011/bcm_nlm/revisions/2022-01-01/article.pdf.
+
+  Args:
+    img: Image.
+    strength: h parameter in the paper. Can be a scalar or per-channel. None to automatically calculate from sigma.
+    sigma: Noise estimation sigma. Estimated automatically if None.
+    search_range: Search range.
+    patch_size: Patch size.
+
+  Returns:
+    Denoised image.
+  """
+  assert search_range % 2 == 1, 'search_range must be odd'
+  assert patch_size % 2 == 1, 'patch_size must be odd'
+
+  if sigma is None:
+    sigma = utils.EstimateNoiseSigma(img)
+
+  if strength is None:
+    if sigma is None:
+      raise ValueError(f'At least one of strength and sigma must be specified.')
+    if patch_size == 3:
+      strength = 0.55 * sigma
+    elif patch_size == 5:
+      strength = 0.4 * sigma
+    elif patch_size == 7:
+      strength = 0.35 * sigma
+    else:
+      raise ValueError(f'strength must be specified with patch size {patch_size}')
+
+  if sigma is None:
+    sigma = jnp.zeros_like(strength)
+
+  p_div_2 = (patch_size - 1) // 2
+  s_div_2 = (search_range - 1) // 2
+
+  num_patches = int(math.ceil(img.shape[0] / patch_size)), int(math.ceil(img.shape[1] / patch_size))
+
+  # First we pad the image. Since we are aligning blocks at (0, 0), on the sides adjacent to that corner, we only need to pad s_div_2.
+  # However, on the (1, 1) sides we need s_div_2 + padding we need to get width/height to a multiple of patch size.
+  pad_low_side = s_div_2
+  pad_high_side = (s_div_2 + num_patches[0] * patch_size - img.shape[0]), (s_div_2 + num_patches[1] * patch_size - img.shape[1])
+  padded_img = jnp.pad(img, ((pad_low_side, pad_high_side[0]), (pad_low_side, pad_high_side[1]), (0, 0)))
+
+  img_out = jnp.zeros_like(padded_img)
+
+  dist_baseline = 2.0 * sigma ** 2
+  h_sq = strength ** 2
+
+  search_offsets = []
+  for y in range(-s_div_2, s_div_2 + 1):
+    for x in range(-s_div_2, s_div_2 + 1):
+      search_offsets.append(np.array((y, x), dtype=np.int32))
+  search_offsets = jnp.stack(search_offsets)
+
+  ref_img = jax.lax.dynamic_slice(padded_img, (pad_low_side, pad_low_side, 0),
+                                  (num_patches[0] * patch_size, num_patches[1] * patch_size, 3))
+
+  def _repeat_weights(w) -> jnp.ndarray:
+    x = jnp.repeat(w, repeats=patch_size, axis=0, total_repeat_length=num_patches[0] * patch_size)
+    return jnp.repeat(x, repeats=patch_size, axis=1, total_repeat_length=num_patches[1] * patch_size)[:, :, jnp.newaxis]
+
+  def _process_offset(i, carry) -> jnp.ndarray:
+    out_img, total_weights, max_weights = carry
+    offset_img = jax.lax.dynamic_slice(padded_img, (pad_low_side + search_offsets[i][0], pad_low_side + search_offsets[i][1], 0),
+                                       (num_patches[0] * patch_size, num_patches[1] * patch_size, 3))
+    dist = (offset_img - ref_img) ** 2
+
+    # Here we depart from the paper a bit - instead of averaging across channels, we keep a per-channel distance for each patch. This allows us
+    # to use channel-dependent sigma baselines and h.
+    patch_sums = jax.lax.reduce_window(dist, init_value=0.0, computation=jax.lax.add,
+                                       window_dimensions=(patch_size, patch_size, 1), window_strides=(patch_size, patch_size, 1), padding='valid')
+    assert patch_sums.shape == num_patches + (3,)
+    d_sq = patch_sums / (patch_size ** 2)
+
+    # Now we can compute per-channel max(d^2 - 2sigma^2, 0) / h^2, then take the mean over channels.
+    exp = -jnp.mean(jnp.maximum(d_sq - 2.0 * sigma ** 2, 0.0) / (strength ** 2), axis=2)
+    weights = jnp.exp(exp)
+
+    total_weights += weights
+    max_weights = jnp.maximum(max_weights, weights)
+    out_img += offset_img * _repeat_weights(weights)
+    return out_img, total_weights, max_weights
+
+  # For the output image we only need to pad to multiple of patch size.
+  out_img = jnp.zeros((num_patches[0] * patch_size, num_patches[1] * patch_size, 3), dtype=img.dtype)
+  total_weights = jnp.zeros(num_patches, dtype=img.dtype)
+  max_weights = jnp.zeros_like(total_weights)
+  init = out_img, total_weights, max_weights
+  out_img, total_weights, max_weights = jax.lax.fori_loop(lower=0, upper=search_offsets.shape[0], body_fun=_process_offset, init_val=init, unroll=16)
+  
+  # Add contributions from the reference patches.
+  out_img += ref_img * _repeat_weights(max_weights)
+
+  total_weights += max_weights
+
+  # Normalize.
+  out_img /= _repeat_weights(total_weights)
+
+  return jax.lax.dynamic_slice(out_img, (0, 0, 0), img.shape)
