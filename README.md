@@ -1,8 +1,8 @@
 # JaxVidFlow
-Experimental video processing pipeline using JAX.
+Video processing pipeline using JAX. Especially suitable for experimenting with custom video processing operations, or integrating with machine learning systems.
 
 ## Why?
-* FFmpeg has done great things for the community over the past decades, but -
+* FFmpeg has done great things for the community over the past decades, and has been the go-to for automated video processing, but -
   * It's really hard to extend. Writing high performance C code is hard, and very hardware-dependent
   * Only a handful of filters have GPU implementations, and generally using them requires very messy command line options
   * Every new CPU or GPU architecture requires new code
@@ -16,7 +16,7 @@ Experimental video processing pipeline using JAX.
     * Future architectures as they come out, without having to change our code (in theory)
   * We can do everything in floating point. FP is the state of the art for minimal-loss multi-stage video processing, and we can do it very fast with GPUs (and CPUs with SIMD).
 
-## Current Progress
+## Current Status
 
 You can run benchmarks.py to see how fast things are, but it doesn't really have a UI yet (not even a CLI). It's just a library. examples/process_dive_video.py shows typical pipeline setup for filtering a video.
 
