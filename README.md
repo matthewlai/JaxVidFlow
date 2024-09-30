@@ -3,7 +3,7 @@ Video processing pipeline using JAX. Especially suitable for experimenting with 
 
 ## Why?
 * FFmpeg has done great things for the community over the past decades, and has been the go-to for automated video processing, but -
-  * It's really hard to extend. Writing high performance C code is hard, and very hardware-dependent
+  * It's really hard to extend with filters. Writing high performance C code is hard, and very hardware-dependent
   * Only a handful of filters have GPU implementations, and generally using them requires very messy command line options
   * Every new CPU or GPU architecture requires new code
 * [JAX](https://jax.readthedocs.io/en/latest/index.html) is a high performance and very user-friendly array computing library.
@@ -23,6 +23,7 @@ You can run benchmarks.py to see how fast things are, but it doesn't really have
 ### Implemented functions
 * Decode / encode pipeline using FFmpeg (through PyAV)
   * Reasonably optimised - only about 10% slower than using FFmpeg directly for a straight transcode with hardware encoding
+    * If you just want to do a straight transcode, I would recommend using FFmpeg instead.
   * Supports hardware encoders (hardware decoders are not supported due to PyAV limitation, but software decoders are very fast anyways)
 
 ### Transforms
