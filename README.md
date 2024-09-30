@@ -30,7 +30,7 @@ You can run benchmarks.py to see how fast things are, but it doesn't really have
 ### Transforms
 * YUV to RGB and back, including chroma subsampling/supersampling
 * Rec709 to linear and back
-* LUT application
+* 3D LUT application with trilinear filtering
 * Resizing with Lanczos interpolation (ok, this is really just a one line call to jax.image.resize())
 * Denoising using NL-Means (both pixelwise and blockwise variants implemented)
   * ~50 fps at 4K on my NVIDIA RTX 3060 Ti, compared to ~2 fps with FFmpeg's CPU implementation (I wasn't able to get the OpenCL version to work)
