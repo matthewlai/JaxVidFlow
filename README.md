@@ -1,5 +1,5 @@
 # JaxVidFlow
-Video processing pipeline using JAX. Especially suitable for experimenting with custom video processing operations, or integrating with machine learning systems.
+Video processing pipeline using JAX. Especially suitable for experimenting with custom video processing operations.
 
 ## Why?
 * FFmpeg has done great things for the community over the past decades, and has been the go-to for automated video processing, but -
@@ -18,7 +18,7 @@ Video processing pipeline using JAX. Especially suitable for experimenting with 
 
 ## Current Status
 
-You can run benchmarks.py to see how fast things are, but it doesn't really have a UI yet (not even a CLI). It's just a library. examples/process_dive_video.py shows typical pipeline setup for filtering a video.
+You can run benchmarks.py to see how fast things are, but it doesn't really have a UI yet (not even a CLI). It's just a library. See examples/process_dive_video.py for a typical pipeline setup for filtering a video.
 
 ### Implemented functions
 * Decode / encode pipeline using FFmpeg (through PyAV)
@@ -90,4 +90,4 @@ pip3 install tqdm pytest
 
 ## Acknowledgements
 * The included [DJI LUT](https://github.com/matthewlai/JaxVidFlow/blob/main/luts/D_LOG_M_to_Rec_709_LUT_ZG_Rev1.cube) is a [better DJI D-Log-M to Linear LUT](https://www.zebgardner.com/photo-and-video-editing/dji-d-log-m-colorgrading) created by [Zeb Gadner](https://www.zebgardner.com/), included here with his permission.
-* The canal.png test image is by [Hervé BRY on Flickr](https://www.flickr.com/photos/setaou/2162752903/), licensed under Attribution-NonCommercial-ShareAlike (CC BY-NC-SA 2.0), Cropped.
+* The canal.png test image is by [Hervé BRY on Flickr](https://www.flickr.com/photos/setaou/2162752903/), licensed under Attribution-NonCommercial-ShareAlike (CC BY-NC-SA 2.0). Cropped from original.
