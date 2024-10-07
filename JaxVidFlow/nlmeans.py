@@ -1,5 +1,6 @@
 import functools
 import math
+from typing import Any
 
 import jax
 from jax import image as jax_image
@@ -14,24 +15,73 @@ from JaxVidFlow.types import FT
 def _make_offsets(search_range: int) -> np.ndarray:
   offsets = []
   s_div_2 = (search_range - 1) // 2
-  for nx in _inclusive_range(-s_div_2, s_div_2):
-    for ny in _inclusive_range(-s_div_2, 0):
+  for nx in range(-s_div_2, s_div_2 + 1):
+    for ny in range(-s_div_2, 1):
       if search_range * ny + nx < 0:
         offsets.append(np.array([ny, nx]))
   return np.stack(offsets)
 
-@functools.partial(jax.jit, static_argnames=['strength', 'search_range', 'patch_size'])
-def nlmeans(img: jnp.ndarray, strength: float, search_range: int, patch_size: int) -> jnp.ndarray:
-  """Fast convolution-based NL-means.
+def default_nlmeans_params(img: jnp.ndarray) -> dict[str, int]:
+  """See page 15 in https://www.ipol.im/pub/art/2014/120/article_lr.pdf"""
+  per_channel_sigma = utils.EstimateNoiseSigma(img)
+
+  sigma = float(jnp.mean(per_channel_sigma))
+  patch_size = 3 if sigma < 0.46 else 5
+
+  search_range = 0
+  if sigma > 0.75:
+    search_range = 21
+  elif sigma > 0.46:
+    search_range = 19
+  elif sigma > 0.24:
+    search_range = 17
+  elif sigma > 0.17:
+    search_range = 13
+  elif sigma > 0.09:
+    search_range = 11
+  elif sigma > 0.08:
+    search_range = 9
+  elif sigma > 0.03:
+    search_range = 7
+  else:
+    search_range = 5
+
+  # We only have defaults for search_range and patch_size, because strength can be automatically
+  # calculated from sigma on a per-frame basis, and doesn't affect JIT compilation.
+  return dict(search_range=search_range, patch_size=patch_size)
+
+
+@functools.partial(jax.jit, static_argnames=['search_range', 'patch_size'])
+def nlmeans(img: jnp.ndarray, search_range: int, patch_size: int, strength: jnp.ndarray | None = None) -> jnp.ndarray:
+  """Fast convolution-based NL-means based on "Non-Local Means Denoising" (Buades et al., IPOL 2011).
 
   This implements NL-means using convolutions by swapping the outer 2 loops. This is described in
   "A Simple Trick to Speed Up and Improve the Non-Local Means" by Laurent Condat.
+
+  The original paper only contains recommended params for the patchwise version. The paper
+  "Parameter-Free Fast Pixelwise Non-Local Means Denoising" by Jacques Froment has suggested
+  params for the pixelwise version (this one). This function implements the NLM-P variant. 
+
+  The accompanying function default_nlmeans_params() can be used to get good defaults (values
+  from the paper above.
+
+  It is recommended to not set strength explicitly. It will be computed using estimated noise
+  sigma from the image.
   """
 
   # Note that ffmpeg and the paper use different definition of patch size and search range. We are using
   # ffmpeg's definition of (search_range * search_range) window instead of (2*search_range+1, 2*search_range+1) windows.
   assert search_range % 2 == 1, 'search_range must be odd'
   assert patch_size % 2 == 1, 'patch_size must be odd'
+
+  # TODO: Investigate if using per-channel sigma for per-channel strength works better.
+  if strength is None:
+    sigma = jnp.mean(utils.EstimateNoiseSigma(img))
+    sigma_lower_bounds = jnp.array([0.0, 0.03, 0.08, 0.09, 0.17, 0.24, 0.46, 0.75])
+    sigma_upper_bounds = jnp.array([0.03, 0.08, 0.09, 0.17, 0.24, 0.46, 0.75, 1.00])
+    strength_multipliers = jnp.array([1.5, 1.4, 1.3, 1.2, 1.1, 1.0, 0.9, 0.9])
+    strength_multiplier = jnp.sum((sigma > sigma_lower_bounds) * (sigma < sigma_upper_bounds) * strength_multipliers)
+    strength = strength_multiplier * sigma
 
   p_div_2 = (patch_size - 1) // 2
   s_div_2 = (search_range - 1) // 2
@@ -58,7 +108,7 @@ def nlmeans(img: jnp.ndarray, strength: float, search_range: int, patch_size: in
     offset_y = offsets[i][0]
     offset_x = offsets[i][1]
     offset_img = jax.lax.dynamic_slice(padded_img, (offset_y + padding, offset_x + padding, 0), img.shape)
-    diff_sq = (img - offset_img) ** 2  # This is u_n in the paper.
+    diff_sq = (img - offset_img) ** 2  # This is u_n in the paper
 
     # We can in theory do this faster by updating the values incrementally since we have a constant kernel. However,
     # that sounds difficult to implement efficiently on GPU, and these separable 2D convs are already very fast.
@@ -86,10 +136,13 @@ def nlmeans(img: jnp.ndarray, strength: float, search_range: int, patch_size: in
     lower=0, upper=offsets.shape[0], body_fun=_process_offset_body_fn, init_val=init_val)
 
   # Add the contribution of the original pixels.
-  img_out = img_out + img * weight_max
+  # We use the max weight unless it's too low (that would cause the normalise step to overflow with FP16).
+  original_pixels_weight = jnp.maximum(weight_max, 1e-6)
+
+  img_out = img_out + img * original_pixels_weight
 
   # Normalise.
-  img_out = img_out / (weight_sum + weight_max)
+  img_out = img_out / (weight_sum + original_pixels_weight)
 
   return img_out
 
@@ -97,7 +150,7 @@ def nlmeans(img: jnp.ndarray, strength: float, search_range: int, patch_size: in
 @functools.partial(jax.jit, static_argnames=['search_range', 'patch_size'])
 def nlmeans_patchwise(img: jnp.ndarray, search_range: int, patch_size: int,
                       strength: jnp.ndarray | None = None, sigma: jnp.ndarray | None = None) -> jnp.ndarray:
-  """Patchwise Non-Local Means as described in https://www.ipol.im/pub/art/2011/bcm_nlm/revisions/2022-01-01/article.pdf.
+  """Patchwise Non-Local Means as described in "Non-Local Means Denoising" (Buades et al., IPOL 2011).
 
   Args:
     img: Image.
@@ -189,11 +242,13 @@ def nlmeans_patchwise(img: jnp.ndarray, search_range: int, patch_size: int,
   out_img, total_weights, max_weights = jax.lax.fori_loop(lower=0, upper=search_offsets.shape[0], body_fun=_process_offset, init_val=init, unroll=16)
   
   # Add contributions from the reference patches.
-  out_img += ref_img * _repeat_weights(max_weights)
+  original_pixels_weight = jnp.maximum(_repeat_weights(max_weights), 1e-6)
 
-  total_weights += max_weights
+  out_img += ref_img * original_pixels_weight
+
+  total_weights = _repeat_weights(total_weights) + original_pixels_weight
 
   # Normalize.
-  out_img /= _repeat_weights(total_weights)
+  out_img /= total_weights
 
   return jax.lax.dynamic_slice(out_img, (0, 0, 0), img.shape)
