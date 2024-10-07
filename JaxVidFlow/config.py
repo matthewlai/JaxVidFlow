@@ -14,13 +14,22 @@ class Config:
     default_factory=lambda: [
       # Test: ffmpeg -i test_files/dolphin_4096.mp4 -c:v {encoder_name} -f null -
 
-      # Apple
+      # Apple (TODO: Find good default params)
       ('hevc_videotoolbox', None),
       
       # NVIDIA
-      ('hevc_nvenc', None),
+      ( 
+        'hevc_nvenc',
+        {
+          # CQ=23 seems like a reasonable default. ~60mbps for city streets at 4K.
+          'rc': 'vbr_hq',
+          'cq': '23',
+          'qmin': '23',
+          'qmax': '23',
+        }
+      ),
 
-      # Software fallback
+      # Software fallback (library defaults are as good as any)
       ('hevc', None),
   ])
 
