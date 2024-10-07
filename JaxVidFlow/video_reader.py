@@ -1,12 +1,18 @@
 import functools
 import logging
 import queue
+import sys
 from typing import Any, Sequence
 
 import av
 import jax
 from jax import image as jax_image
 from jax import numpy as jnp
+
+sys.path.append('.')
+
+from JaxVidFlow import colourspaces
+from JaxVidFlow.types import FT
 
 logger = logging.getLogger(__name__)
 
@@ -126,19 +132,20 @@ class VideoReader:
     y, u, v = raw_frame
 
     max_val = 2 ** bits - 1
-    y = y.astype(jnp.float32) / max_val
-    u = u.astype(jnp.float32) / max_val - 0.5
-    v = v.astype(jnp.float32) / max_val - 0.5
+    y = y.astype(FT()) / max_val
+    u = u.astype(FT()) / max_val
+    v = v.astype(FT()) / max_val
 
     u = undo_2x2subsample(u)
     v = undo_2x2subsample(v)
 
     assert y.shape == u.shape and u.shape == v.shape
 
+    yuv = jnp.stack([y, u, v], axis=2)
+
     # Do BT.709 conversion to RGB.
     # https://en.wikipedia.org/wiki/YCbCr#ITU-R_BT.709_conversion
 
-    r = y + 1.5748 * v
-    g = y - 0.1873 * u - 0.4681 * v
-    b = y + 1.8556 * u
-    return jnp.clip(jnp.stack((r, g, b), axis=2), min=0.0, max=1.0)
+    rgb = colourspaces.YUV2RGB(yuv)
+
+    return jnp.clip(rgb, min=0.0, max=1.0)

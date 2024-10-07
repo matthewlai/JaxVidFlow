@@ -75,7 +75,7 @@ def main():
   utils.EnablePersistentCache()
 
   # Get default configs.
-  config = Config(force_cpu_backend=False)
+  config = Config(force_cpu_backend=False, profiling=False)
 
   if config.force_cpu_backend:
     jax.config.update('jax_platform_name', 'cpu')
@@ -85,7 +85,7 @@ def main():
   codec_name, codec_options = utils.FindCodec(config.encoders)
 
   if config.profiling:
-    jax.profiler.start_trace("/tmp/tensorboard")
+    jax.profiler.start_trace("/tmp/jax-trace", create_perfetto_link=True)
 
   nlmeans_params = None
 

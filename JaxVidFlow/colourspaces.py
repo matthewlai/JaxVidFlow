@@ -29,6 +29,8 @@ def YUV2RGB(x: jnp.ndarray) -> jnp.ndarray:
   y = x[:, :, 0]
   u = x[:, :, 1] - 0.5
   v = x[:, :, 2] - 0.5
+
+  # This is much faster than matrix multiply on CPU. On GPU it's the same.
   r = y + 1.5748 * v
   g = y - 0.1873 * u - 0.4681 * v
   b = y + 1.8556 * u
@@ -37,10 +39,11 @@ def YUV2RGB(x: jnp.ndarray) -> jnp.ndarray:
 
 def RGB2YUV(x: jnp.ndarray) -> jnp.ndarray:
   r, g, b = x[:, :, 0], x[:, :, 1], x[:, :, 2]
-  y = 0.2126 * r + 0.7152 * g + 0.0722 * b
-  u = -0.1146 * r + -0.3854 * g + 0.5 * b
-  v = 0.5 * r + -0.4542 * g + -0.0458 * b
-  u += 0.5
-  v += 0.5
-  yuv = jnp.stack((y, u, v), axis=2)
+  matrix = jnp.transpose(jnp.array([
+    [0.2126, 0.7152, 0.0722],
+    [-0.1146, -0.3854, 0.5],
+    [0.5, -0.4542, -0.0458]
+  ], dtype=x.dtype))
+  yuv = jnp.matmul(x, matrix)
+  yuv = yuv.at[:, :, 1:3].add(0.5)
   return jnp.clip(yuv, min=0.0, max=1.0)

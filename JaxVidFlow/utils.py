@@ -65,7 +65,7 @@ def EstimateNoiseSigma(img: jnp.ndarray) -> jnp.ndarray:
     [1, -2, 1],
     [-2, 4, -2],
     [1, -2, 1]
-  ], dtype=FT())
+  ], dtype=jnp.float32)  # Force the convolution to happen in F32 for stability.
 
   plane_sigmas = []
 

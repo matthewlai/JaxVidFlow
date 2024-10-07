@@ -1,9 +1,14 @@
 import functools
+import sys
 
 import av
 import jax
 from jax import numpy as jnp
 import numpy as np
+
+sys.path.append('.')
+
+from JaxVidFlow import colourspaces
 
 class VideoWriter:
   def __init__(self, filename: str, frame_rate: float, pixfmt: str,
@@ -80,23 +85,20 @@ class VideoWriter:
     assert rgb_frame.shape[1] % 2 == 0, f'Frame width and height must be even for 4:2:0. ({rgb_frame.shape[1]}x{rgb_frame.shape[0]})'
 
     # First, RGB to YUV.
-    r, g, b = rgb_frame[:, :, 0], rgb_frame[:, :, 1], rgb_frame[:, :, 2]
-    y = 0.2126 * r + 0.7152 * g + 0.0722 * b
-    u = -0.1146 * r + -0.3854 * g + 0.5 * b
-    v = 0.5 * r + -0.4542 * g + -0.0458 * b
-    u += 0.5
-    v += 0.5
-    y = jnp.clip(y, min=0.0, max=1.0)
+    yuv = colourspaces.RGB2YUV(rgb_frame)
 
     # Then we subsample U and V. Take upper left for now. This may or may not be standard, but close enough.
-    u, v = u[0::2, 0::2], v[0::2, 0::2]
-    u = jnp.clip(u, min=0.0, max=1.0)
-    v = jnp.clip(v, min=0.0, max=1.0)
+    uv = yuv[0::2, 0::2, 1:]
 
-    # Convert to uint8 (TODO: add uint16 support for 10-bit).
-    y = jnp.round(y * 255).astype(jnp.uint8)
-    u = jnp.round(u * 255).astype(jnp.uint8)
-    v = jnp.round(v * 255).astype(jnp.uint8)
+    y = yuv[:, :, 0]
 
     # Finally, concatenate into the packed format libAV wants.
-    return jnp.concatenate([y.reshape(-1), u.reshape(-1), v.reshape(-1)]).reshape(-1, y.shape[1])
+    yuv = jnp.concatenate([
+                            y.reshape(-1),
+                            uv[:, :, 0].reshape(-1),
+                            uv[:, :, 1].reshape(-1)]).reshape(-1, y.shape[1])
+
+    # Convert to uint8 (TODO: add uint16 support for 10-bit).
+    yuv = jnp.round(yuv * 255).astype(jnp.uint8)
+
+    return yuv
