@@ -8,7 +8,7 @@ import numpy as np
 
 sys.path.append('.')
 
-from JaxVidFlow import colourspaces
+from JaxVidFlow import colourspaces, utils
 
 class VideoWriter:
   def __init__(self, filename: str, frame_rate: float, pixfmt: str,
@@ -27,7 +27,7 @@ class VideoWriter:
 
     self._non_video_streams = []
 
-  def add_frame(self, encoded_frame: jnp.ndarray | np.ndarray | None):
+  def add_frame(self, encoded_frame):
     """Add a raw frame already encoded using EncodeFrame()."""
     if self.waiting_for_first_frame:
       self.waiting_for_first_frame = False
@@ -36,14 +36,22 @@ class VideoWriter:
       # Here the frame has already been encoded in a stacked way that libAV expects, with
       # shape[0] = height (y) + height / 4 (u) + height / 4 (v)
       # shape[1] = width
-      width = encoded_frame.shape[1]
-      height = encoded_frame.shape[0] * 4 // 6
+      width = encoded_frame[0].shape[1]
+      height = encoded_frame[0].shape[0]
 
       self.out_video_stream.width = width
       self.out_video_stream.height = height
 
     if self.last_frame is not None:
-      frame_data_last = np.array(self.last_frame)
+      y, uv = self.last_frame
+      y = np.array(y)
+      uv = np.array(uv)
+
+      frame_data_last = np.concatenate([
+          y.reshape(-1),
+          uv[:, :, 0].reshape(-1),
+          uv[:, :, 1].reshape(-1)]).reshape(-1, y.shape[1])
+
       new_frame = av.VideoFrame.from_numpy_buffer(frame_data_last, format=self.frame_format())
       for packet in self.out_video_stream.encode(new_frame):
         self.out_container.mux(packet)
@@ -87,18 +95,11 @@ class VideoWriter:
     # First, RGB to YUV.
     yuv = colourspaces.RGB2YUV(rgb_frame)
 
-    # Then we subsample U and V. Take upper left for now. This may or may not be standard, but close enough.
-    uv = yuv[0::2, 0::2, 1:]
-
-    y = yuv[:, :, 0]
-
-    # Finally, concatenate into the packed format libAV wants.
-    yuv = jnp.concatenate([
-                            y.reshape(-1),
-                            uv[:, :, 0].reshape(-1),
-                            uv[:, :, 1].reshape(-1)]).reshape(-1, y.shape[1])
-
     # Convert to uint8 (TODO: add uint16 support for 10-bit).
     yuv = jnp.round(yuv * 255).astype(jnp.uint8)
 
-    return yuv
+    # Then we subsample U and V. Take upper left for now. This may or may not be standard, but close enough.
+    uv = yuv[0::2, 0::2, 1:]
+    y = yuv[:, :, 0]
+
+    return y, uv

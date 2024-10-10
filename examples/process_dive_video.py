@@ -9,11 +9,20 @@ import threading
 import time
 from typing import Any, Generator, Sequence
 
+import psutil
+
 if platform.system() == 'Darwin':
   # Required for Jax on Metal (https://developer.apple.com/metal/jax/):
   os.environ['ENABLE_PJRT_COMPATIBILITY'] = '1'
 
 os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
+
+xla_flags = {
+  'xla_force_host_platform_device_count': f'{psutil.cpu_count(logical=False)}',
+}
+
+if xla_flags:
+  os.environ['XLA_FLAGS'] = '--' + ' '.join([f'{name}={val}' for name, val in xla_flags.items()])
 
 import av
 import jax
@@ -51,12 +60,10 @@ def normalize(x: jnp.ndarray, max_gain: float = 200.0, downsample_win: int = 8):
 
 # Approximately equivalent to for benchmarking purposes:
 # ffmpeg -i test_files/dji_dlogm_street.mp4 -vf "lut3d=file=luts/D_LOG_M_to_Rec_709_LUT_ZG_Rev1.cube:interp=trilinear,nlmeans=s=8.0:p=3:r=5,format=yuv420p" -c:v hevc_nvenc -f null -
-@functools.partial(jax.jit, static_argnames=['frame_format', 'nlmeans_params'])
-def process_frame(raw_frame, frame_format: str, nlmeans_params: frozenset[str, int]) -> jnp.ndarray:
+@functools.partial(jax.jit, static_argnames=['frame_format'])
+def process_frame(raw_frame, frame_format: str) -> jnp.ndarray:
   frame_in = VideoReader.DecodeFrame(raw_frame, frame_format)
-  frame_in = scale.scale_image(frame_in, new_width=1920)
   frame = colourspaces.Rec709ToLinear(frame_in)
-  #frame = nlmeans.nlmeans(frame, **dict(nlmeans_params))
   frame = normalize(frame)
   frame = colourspaces.LinearToRec709(frame)
   frame = utils.MergeSideBySide(frame_in, frame)
@@ -80,14 +87,13 @@ def main():
   if config.force_cpu_backend:
     jax.config.update('jax_platform_name', 'cpu')
 
-  video_reader = VideoReader(filename='test_files/lionfish.mp4')
+  video_reader = VideoReader(filename='test_files/lionfish.mp4',
+                             scale_width=1920)
 
   codec_name, codec_options = utils.FindCodec(config.encoders)
 
   if config.profiling:
     jax.profiler.start_trace("/tmp/jax-trace", create_perfetto_link=True)
-
-  nlmeans_params = None
 
   with VideoWriter(filename='test_out.mp4',
                    frame_rate=video_reader.frame_rate(),
@@ -97,12 +103,14 @@ def main():
     for frame_i, frame_data in tqdm(enumerate(video_reader), unit=' frames'):
       raw_frame, frame_format = frame_data
 
-      if nlmeans_params is None:
-        nlmeans_params = calculate_nlmeans_params(raw_frame, frame_format)
-        print(f'NLmeans params: {nlmeans_params}')
+      y, u, v = raw_frame
+      y = jax.device_put(y, utils.GetSharding())
+      u = jax.device_put(u, utils.GetSharding())
+      v = jax.device_put(v, utils.GetSharding())
+      raw_frame = y, u, v
 
       # Submit a processing call to the GPU.
-      frame = process_frame(raw_frame, frame_format, nlmeans_params)
+      frame = process_frame(raw_frame, frame_format)
 
       video_writer.add_frame(encoded_frame=frame)
       video_writer.write_audio_packets(audio_packets=video_reader.audio_packets(),

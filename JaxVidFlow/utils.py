@@ -1,10 +1,13 @@
+import functools
 import math
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Callable, Sequence
 
 import jax
 from jax import numpy as jnp
 from jax import scipy as jsp
+from jax.experimental import mesh_utils
+from jax.sharding import Mesh, PartitionSpec as P, NamedSharding
 import numpy as np
 from PIL import Image
 
@@ -59,7 +62,6 @@ def EstimateNoiseSigma(img: jnp.ndarray) -> jnp.ndarray:
   J. Immerkær, "Fast Noise Variance Estimation", Computer Vision and Image Understanding, Vol. 64, No. 2, pp. 300-302, Sep. 1996
 
   """
-
   h, w = img.shape[:2]
   kernel = jnp.array([
     [1, -2, 1],
@@ -76,3 +78,37 @@ def EstimateNoiseSigma(img: jnp.ndarray) -> jnp.ndarray:
     plane_sigmas.append(sigma)
   return jnp.stack(plane_sigmas)
 
+@functools.partial(jax.jit, static_argnames=['multiple_of'])
+def PadFirstAxisToMultipleOf(x: jnp.ndarray, multiple_of: int) -> jnp.ndarray:
+  old_shape0 = x.shape[0]
+  new_shape0 = math.ceil(old_shape0 / multiple_of) * multiple_of
+  padding = new_shape0 - old_shape0
+  if padding == 0:
+    return x
+  else:
+    return jnp.pad(x, ((0, padding), (0, 0) * (len(x.shape) - 1)))
+
+def ExecuteWithPmap(fn: Callable[..., Any], args_to_pmap: Sequence[str],
+                    output_leading_axes: Sequence[int] | int, **kwargs):
+  """Execute fn by pmapping over the leading axis of args in args_to_pmap, and reconstruct afterwards."""
+  num_devices = len(jax.devices())
+  pm_fn = jax.pmap(fn, axis_name='slices')
+  original_arg_shapes = {name: kwargs[name].shape for name in args_to_pmap}
+  padded_args = {name: PadFirstAxisToMultipleOf(kwargs[name], multiple_of=num_devices)
+                 for name in args_to_pmap}
+  kwargs.update(padded_args)
+  ret_vals = pm_fn(**kwargs)
+  if isinstance(output_leading_axes, int):
+    return ret_vals[:output_leading_axes]
+  else:
+    assert len(ret_vals) == len(output_leading_axes)
+    return tuple(ret_vals[i][:output_leading_axes[i]] for i, size in enumerate(output_leading_axes))
+
+@functools.cache
+def GetSharding(num_devices_limit: int = None):
+  devices = jax.devices()
+  if num_devices_limit is not None and len(devices) > num_devices_limit:
+    devices = devices[:num_devices_limit]
+  print(f'Sharding over {len(devices)} devices')
+  mesh = Mesh(devices=jax.devices(), axis_names=('s',))
+  return NamedSharding(mesh, P('s'))

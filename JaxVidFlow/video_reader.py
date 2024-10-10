@@ -11,7 +11,7 @@ from jax import numpy as jnp
 
 sys.path.append('.')
 
-from JaxVidFlow import colourspaces
+from JaxVidFlow import colourspaces, scale
 from JaxVidFlow.types import FT
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ def undo_2x2subsample(x: jnp.ndarray) -> jnp.ndarray:
 
 
 class VideoReader:
-  def __init__(self, filename: str):
+  def __init__(self, filename: str, scale_width: int | None = None, scale_height: int | None = None):
     self.in_container = av.open(filename)
     self.in_video_stream = self.in_container.streams.video[0]
     self.in_audio_stream = self.in_container.streams.audio[0]
@@ -57,15 +57,21 @@ class VideoReader:
         logger.info(f'    {stream.name}')
         # We don't know how to copy data streams.
 
-
     # Enable frame threading.
     self.in_video_stream.thread_type = 'AUTO'
 
+    self._width = self.in_video_stream.codec_context.width
+    self._height = self.in_video_stream.codec_context.height
+
+    self._height, self._width = scale.calculate_new_dims(
+        old_width=self._width, old_height=self._height,
+        multiple_of=8, new_width=scale_width, new_height=scale_height)
+
   def width(self) -> int:
-    return self.in_video_stream.codec_context.width
+    return self._width
 
   def height(self) -> int:
-    return self.in_video_stream.codec_context.height
+    return self._height
 
   def frame_rate(self) -> float:
     return self.in_video_stream.guessed_rate
@@ -95,7 +101,7 @@ class VideoReader:
         for frame in packet.decode():
           self._decoded_frames.put(frame)
 
-    frame = self._decoded_frames.get()
+    frame = self._decoded_frames.get().reformat(width=self._width, height=self._height)
 
     # Reading from video planes directly saves an extra copy in VideoFrame.to_ndarray.
     # Planes should be in machine byte order, which should also be what frombuffer() expects.
