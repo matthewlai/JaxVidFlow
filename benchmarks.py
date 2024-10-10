@@ -48,7 +48,7 @@ _CODEC_PREFERENCES = [
 
 def _video_decode():
   start_time = time.time()
-  for i, _ in enumerate(VideoReader(filename='test_files/dolphin_4096.mp4')):
+  for i, _ in enumerate(VideoReader(filename='test_files/lionfish.mp4')):
     if i > 100:
       break
   duration = time.time() - start_time
@@ -56,7 +56,7 @@ def _video_decode():
 
 def _video_transcode():
   start_time = time.time()
-  video_reader = VideoReader(filename='test_files/dolphin_4096.mp4')
+  video_reader = VideoReader(filename='test_files/lionfish.mp4')
 
   codec_name, codec_options = utils.FindCodec(_CODEC_PREFERENCES)
   print(f' Using {codec_name}')
@@ -79,7 +79,7 @@ def _video_transcode():
   print(f' {i} frames in {duration:.2f}s ({i / duration:.2f} fps, {duration / i * 1000:.2f}ms/frame)')
 
 def _video_transcode_rgb():
-  video_reader = VideoReader(filename='test_files/dolphin_4096.mp4')
+  video_reader = VideoReader(filename='test_files/lionfish.mp4')
 
   codec_name, codec_options = utils.FindCodec(_CODEC_PREFERENCES)
   print(f' Using {codec_name}')
@@ -142,7 +142,7 @@ def _test_jax_op(fn, name='', iterations=100, input_shape=(3840, 2160, 3)):
     if time.time() - start_time > 1.0:
       break
   duration = time.time() - start_time
-  print(f'{name} {duration / i * 1000:.2f}ms/frame')
+  print(f'{name} {duration / (i + 1) * 1000:.2f}ms/frame')
 
 
 def _pad_to_len(s: str, length: int = 80) -> str:
@@ -168,21 +168,21 @@ def main():
   is_cpu = default_device.platform == 'cpu'
   print(f'Default device is: {default_device.platform} ({default_device.device_kind})')
 
-  # print(_pad_to_len('Video Decode (4k)'))
-  # _video_decode()
-  # print(_pad_to_len('Video Transcode (4k)'))
-  # _video_transcode()
-  # print(_pad_to_len('Video Transcode with RGB conversions (4k)'))
-  # _video_transcode_rgb()
-  # if not is_cpu:
-  #   print(_pad_to_len('Host <=> GPU'))
-  #   _host_to_from_gpu()
-  # print(_pad_to_len('Downsample 2x2 (linear)'))
-  # _test_jax_op(lambda x: jax_image.resize(x, (x.shape[0] // 2, x.shape[1] // 2, x.shape[2]), method='linear'), input_shape=(3840, 2160, 1))
-  # print(_pad_to_len('Downsample 2x2 (lanczos3)'))
-  # _test_jax_op(lambda x: jax_image.resize(x, (x.shape[0] // 2, x.shape[1] // 2, x.shape[2]), method='lanczos3'), input_shape=(3840, 2160, 1))
-  # print(_pad_to_len('Apply LUT'))
-  # _test_jax_op(lambda x: lut.apply_lut(x, _LUT_PATH))
+  print(_pad_to_len('Video Decode (4k)'))
+  _video_decode()
+  print(_pad_to_len('Video Transcode (4k)'))
+  _video_transcode()
+  print(_pad_to_len('Video Transcode with RGB conversions (4k)'))
+  _video_transcode_rgb()
+  if not is_cpu:
+    print(_pad_to_len('Host <=> GPU'))
+    _host_to_from_gpu()
+  print(_pad_to_len('Downsample 2x2 (linear)'))
+  _test_jax_op(lambda x: jax_image.resize(x, (x.shape[0] // 2, x.shape[1] // 2, x.shape[2]), method='linear'), input_shape=(3840, 2160, 1))
+  print(_pad_to_len('Downsample 2x2 (lanczos3)'))
+  _test_jax_op(lambda x: jax_image.resize(x, (x.shape[0] // 2, x.shape[1] // 2, x.shape[2]), method='lanczos3'), input_shape=(3840, 2160, 1))
+  print(_pad_to_len('Apply LUT'))
+  _test_jax_op(lambda x: lut.apply_lut(x, _LUT_PATH))
   print(_pad_to_len('Pixel NL-means'))
   _test_jax_op(lambda x: nlmeans.nlmeans_patchwise(img=x, strength=1.2*0.15, search_range=11, patch_size=3))
   print(_pad_to_len('Patchwise NL-means'))

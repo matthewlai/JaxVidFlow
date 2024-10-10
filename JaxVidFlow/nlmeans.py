@@ -82,6 +82,9 @@ def nlmeans(img: jnp.ndarray, search_range: int, patch_size: int, strength: jnp.
     strength_multipliers = jnp.array([1.5, 1.4, 1.3, 1.2, 1.1, 1.0, 0.9, 0.9])
     strength_multiplier = jnp.sum((sigma > sigma_lower_bounds) * (sigma < sigma_upper_bounds) * strength_multipliers)
     strength = strength_multiplier * sigma
+  
+  stregnth = strength.astype(img.dtype)
+  sigma = sigma.astype(img.dtype)
 
   p_div_2 = (patch_size - 1) // 2
   s_div_2 = (search_range - 1) // 2
@@ -112,8 +115,8 @@ def nlmeans(img: jnp.ndarray, search_range: int, patch_size: int, strength: jnp.
 
     # We can in theory do this faster by updating the values incrementally since we have a constant kernel. However,
     # that sounds difficult to implement efficiently on GPU, and these separable 2D convs are already very fast.
-    patch_diffs = _separable_2d_conv(diff_sq, jnp.ones((patch_size, 1), dtype=FT()) / patch_size,
-                                              jnp.ones((1, patch_size), dtype=FT()) / patch_size)  # This is v_n in the paper.
+    patch_diffs = _separable_2d_conv(diff_sq, jnp.ones((patch_size, 1), dtype=img.dtype) / patch_size,
+                                              jnp.ones((1, patch_size), dtype=img.dtype) / patch_size)  # This is v_n in the paper.
     weights = jnp.exp(-patch_diffs / (strength ** 2))
 
     # Line 5) in the pseudo-code.
@@ -167,6 +170,8 @@ def nlmeans_patchwise(img: jnp.ndarray, search_range: int, patch_size: int,
 
   if sigma is None:
     sigma = utils.EstimateNoiseSigma(img)
+   
+  sigma = sigma.astype(img.dtype)
 
   if strength is None:
     if sigma is None:
@@ -179,9 +184,8 @@ def nlmeans_patchwise(img: jnp.ndarray, search_range: int, patch_size: int,
       strength = 0.35 * sigma
     else:
       raise ValueError(f'strength must be specified with patch size {patch_size}')
-
-  if sigma is None:
-    sigma = jnp.zeros_like(strength)
+ 
+  strength = strength.astype(img.dtype)
 
   p_div_2 = (patch_size - 1) // 2
   s_div_2 = (search_range - 1) // 2
