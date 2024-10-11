@@ -192,8 +192,8 @@ def main():
   _test_jax_op(lambda x: jax_image.resize(x, (x.shape[0] // 2, x.shape[1] // 2, x.shape[2]), method='linear'), input_shape=(3840, 2160, 1))
   print(_pad_to_len('Downsample 2x2 (lanczos3)'))
   _test_jax_op(lambda x: jax_image.resize(x, (x.shape[0] // 2, x.shape[1] // 2, x.shape[2]), method='lanczos3'), input_shape=(3840, 2160, 1))
+  # METAL seems to crash on large inputs for LUT lookup, and is extremely slow even for very small images.
   if not compat.is_metal():
-    # METAL seems to crash on large inputs for LUT lookup.
     print(_pad_to_len('Apply LUT'))
     _test_jax_op(lambda x: lut.apply_lut(x, _LUT_PATH))
   if not compat.is_metal():
