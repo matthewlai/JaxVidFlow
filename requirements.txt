@@ -12,7 +12,6 @@ h5py>=3.11.0
 idna>=3.10
 iniconfig>=2.0.0
 jax>=0.4.31
-jax-metal>=0.1.0
 jaxlib>=0.4.31
 keras>=3.5.0
 libclang>=18.1.1
