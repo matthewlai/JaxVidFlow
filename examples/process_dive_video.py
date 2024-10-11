@@ -93,6 +93,8 @@ def main():
   if config.profiling:
     jax.profiler.start_trace("/tmp/jax-trace", create_perfetto_link=True)
 
+  sharding = None
+
   with VideoWriter(filename='test_out.mp4',
                    frame_rate=video_reader.frame_rate(),
                    pixfmt='yuv420p',
@@ -102,9 +104,13 @@ def main():
       raw_frame, frame_format = frame_data
 
       y, u, v = raw_frame
-      y = jax.device_put(y, utils.GetSharding())
-      u = jax.device_put(u, utils.GetSharding())
-      v = jax.device_put(v, utils.GetSharding())
+
+      if sharding is None:
+        sharding = utils.GetSharding(num_devices_limit=None, divisor_of=y.shape[0])
+
+      y = jax.device_put(y, sharding)
+      u = jax.device_put(u, sharding)
+      v = jax.device_put(v, sharding)
       raw_frame = y, u, v
 
       # Submit a processing call to the GPU.

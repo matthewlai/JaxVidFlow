@@ -105,10 +105,14 @@ def ExecuteWithPmap(fn: Callable[..., Any], args_to_pmap: Sequence[str],
     return tuple(ret_vals[i][:output_leading_axes[i]] for i, size in enumerate(output_leading_axes))
 
 @functools.cache
-def GetSharding(num_devices_limit: int = None):
+def GetSharding(num_devices_limit: int = None, divisor_of: int = 1):
   devices = jax.devices()
-  if num_devices_limit is not None and len(devices) > num_devices_limit:
-    devices = devices[:num_devices_limit]
+  num_devices = len(devices)
+  if num_devices_limit is not None and num_devices > num_devices_limit:
+    num_devices = num_devices_limit
+  while divisor_of % num_devices != 0:
+    num_devices -= 1
+  devices = devices[:num_devices]
   print(f'Sharding over {len(devices)} devices')
-  mesh = Mesh(devices=jax.devices(), axis_names=('s',))
+  mesh = Mesh(devices=devices, axis_names=('s',))
   return NamedSharding(mesh, P('s'))
