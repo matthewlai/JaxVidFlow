@@ -9,11 +9,20 @@ import threading
 import time
 from typing import Any, Generator, Sequence
 
+import psutil
+
 if platform.system() == 'Darwin':
   # Required for Jax on Metal (https://developer.apple.com/metal/jax/):
   os.environ['ENABLE_PJRT_COMPATIBILITY'] = '1'
 
 os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
+
+xla_flags = {
+  'xla_force_host_platform_device_count': f'{psutil.cpu_count(logical=False)}',
+}
+
+if xla_flags:
+  os.environ['XLA_FLAGS'] = '--' + ' '.join([f'{name}={val}' for name, val in xla_flags.items()])
 
 import av
 import jax
@@ -21,7 +30,7 @@ from jax import image as jax_image
 from jax import numpy as jnp
 import numpy as np
 
-from JaxVidFlow import colourspaces, lut, nlmeans, utils
+from JaxVidFlow import colourspaces, compat, lut, nlmeans, utils
 from JaxVidFlow.types import FT
 from JaxVidFlow.config import Config
 from JaxVidFlow.video_reader import VideoReader
@@ -48,7 +57,7 @@ _CODEC_PREFERENCES = [
 
 def _video_decode():
   start_time = time.time()
-  for i, _ in enumerate(VideoReader(filename='test_files/lionfish.mp4')):
+  for i, _ in enumerate(VideoReader(filename='test_files/lionfish.mp4', scale_width=4096)):
     if i > 100:
       break
   duration = time.time() - start_time
@@ -56,7 +65,7 @@ def _video_decode():
 
 def _video_transcode():
   start_time = time.time()
-  video_reader = VideoReader(filename='test_files/lionfish.mp4')
+  video_reader = VideoReader(filename='test_files/lionfish.mp4', scale_width=4096)
 
   codec_name, codec_options = utils.FindCodec(_CODEC_PREFERENCES)
   print(f' Using {codec_name}')
@@ -69,8 +78,8 @@ def _video_transcode():
       for i, frame_data in enumerate(video_reader):
         raw_frame, frame_format = frame_data
         y, u, v = raw_frame
-        stacked_frame = jnp.concatenate([y.reshape(-1), u.reshape(-1), v.reshape(-1)]).reshape(-1, y.shape[1])
-        video_writer.add_frame(encoded_frame=stacked_frame)
+        uv = jnp.stack((u, v), axis=2)
+        video_writer.add_frame(encoded_frame=(y, uv))
         if i > 100:
           break
     os.remove('test_out.mp4')
@@ -79,7 +88,7 @@ def _video_transcode():
   print(f' {i} frames in {duration:.2f}s ({i / duration:.2f} fps, {duration / i * 1000:.2f}ms/frame)')
 
 def _video_transcode_rgb():
-  video_reader = VideoReader(filename='test_files/lionfish.mp4')
+  video_reader = VideoReader(filename='test_files/lionfish.mp4', scale_width=4096)
 
   codec_name, codec_options = utils.FindCodec(_CODEC_PREFERENCES)
   print(f' Using {codec_name}')
@@ -97,7 +106,9 @@ def _video_transcode_rgb():
     for i, frame_data in enumerate(video_reader):
       raw_frame, frame_format = frame_data
       if i == 0:
-        process_frame(raw_frame, frame_format).block_until_ready()
+        frame = process_frame(raw_frame, frame_format)
+        for f in frame:
+          f.block_until_ready()
         start_time = time.time()
       video_writer.add_frame(encoded_frame=process_frame(raw_frame, frame_format))
       if i > 100:
@@ -117,12 +128,12 @@ def _host_to_from_gpu():
     start_time = time.time()
     ITERATIONS = 100
     for _ in range(ITERATIONS):
-      jax.device_put(cpu, jax.devices('gpu')[0]).block_until_ready()
+      jax.device_put(cpu, jax.devices()[0]).block_until_ready()
     duration = time.time() - start_time
     total_bytes = cpu.size * x.dtype.itemsize * ITERATIONS
     print(f' {shape_name} CPU => GPU {duration / ITERATIONS * 1000:.2f}ms/frame, {_pretty_size(total_bytes / duration)}/s')
 
-    gpu = jax.device_put(x, jax.devices('gpu')[0]).block_until_ready()
+    gpu = jax.device_put(x, jax.devices()[0]).block_until_ready()
     for _ in range(ITERATIONS):
       jax.device_put(gpu, jax.devices('cpu')[0]).block_until_ready()
     duration = time.time() - start_time
@@ -181,12 +192,15 @@ def main():
   _test_jax_op(lambda x: jax_image.resize(x, (x.shape[0] // 2, x.shape[1] // 2, x.shape[2]), method='linear'), input_shape=(3840, 2160, 1))
   print(_pad_to_len('Downsample 2x2 (lanczos3)'))
   _test_jax_op(lambda x: jax_image.resize(x, (x.shape[0] // 2, x.shape[1] // 2, x.shape[2]), method='lanczos3'), input_shape=(3840, 2160, 1))
-  print(_pad_to_len('Apply LUT'))
-  _test_jax_op(lambda x: lut.apply_lut(x, _LUT_PATH))
-  print(_pad_to_len('Pixel NL-means'))
-  _test_jax_op(lambda x: nlmeans.nlmeans_patchwise(img=x, strength=1.2*0.15, search_range=11, patch_size=3))
-  print(_pad_to_len('Patchwise NL-means'))
-  _test_jax_op(lambda x: nlmeans.nlmeans_patchwise(img=x, sigma=0.15, search_range=21, patch_size=3))
+  if not compat.is_metal():
+    # METAL seems to crash on large inputs for LUT lookup.
+    print(_pad_to_len('Apply LUT'))
+    _test_jax_op(lambda x: lut.apply_lut(x, _LUT_PATH))
+  if not compat.is_metal():
+    print(_pad_to_len('Pixel NL-means'))
+    _test_jax_op(lambda x: nlmeans.nlmeans_patchwise(img=x, strength=1.2*0.15, search_range=11, patch_size=3))
+    print(_pad_to_len('Patchwise NL-means'))
+    _test_jax_op(lambda x: nlmeans.nlmeans_patchwise(img=x, sigma=0.15, search_range=21, patch_size=3))
 
 if __name__ == '__main__':
   main()

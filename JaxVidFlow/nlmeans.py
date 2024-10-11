@@ -8,7 +8,7 @@ from jax import numpy as jnp
 import jax.scipy as jsp
 import numpy as np
 
-from JaxVidFlow import colourspaces, lut, utils
+from JaxVidFlow import colourspaces, compat, lut, utils
 from JaxVidFlow.types import FT
 
 
@@ -68,6 +68,9 @@ def nlmeans(img: jnp.ndarray, search_range: int, patch_size: int, strength: jnp.
   It is recommended to not set strength explicitly. It will be computed using estimated noise
   sigma from the image.
   """
+
+  assert jax.devices()[0].platform.lower() != 'metal', \
+      "NL means currently crashes METAL backend, probably https://github.com/jax-ml/jax/issues/21552. Use JAX_PLATFORMS=cpu"
 
   # Note that ffmpeg and the paper use different definition of patch size and search range. We are using
   # ffmpeg's definition of (search_range * search_range) window instead of (2*search_range+1, 2*search_range+1) windows.
@@ -224,10 +227,8 @@ def nlmeans_patchwise(img: jnp.ndarray, search_range: int, patch_size: int,
 
     # Here we depart from the paper a bit - instead of averaging across channels, we keep a per-channel distance for each patch. This allows us
     # to use channel-dependent sigma baselines and h.
-    patch_sums = jax.lax.reduce_window(dist, init_value=0.0, computation=jax.lax.add,
-                                       window_dimensions=(patch_size, patch_size, 1), window_strides=(patch_size, patch_size, 1), padding='valid')
-    assert patch_sums.shape == num_patches + (3,)
-    d_sq = patch_sums / (patch_size ** 2)
+    d_sq = compat.window_reduce_mean(dist, (patch_size, patch_size))
+    assert d_sq.shape == num_patches + (3,)
 
     # Now we can compute per-channel max(d^2 - 2sigma^2, 0) / h^2, then take the mean over channels.
     exp = -jnp.mean(jnp.maximum(d_sq - 2.0 * sigma ** 2, 0.0) / (strength ** 2), axis=2)

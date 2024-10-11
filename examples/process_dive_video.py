@@ -33,7 +33,7 @@ from tqdm import tqdm
 
 sys.path.append('.')
 
-from JaxVidFlow import colourspaces, lut, nlmeans, scale, utils
+from JaxVidFlow import colourspaces, compat, lut, nlmeans, scale, utils
 from JaxVidFlow.config import Config
 from JaxVidFlow.video_reader import VideoReader
 from JaxVidFlow.video_writer import VideoWriter
@@ -47,11 +47,9 @@ logging.basicConfig(encoding='utf-8', level=logging.INFO,
 def normalize(x: jnp.ndarray, max_gain: float = 200.0, downsample_win: int = 8):
   # Ideally we want to use quantiles here to reduce the effect of noise, but quantiles are very slow
   # on GPU, so let's just do a downsample (reduce mean) instead.
-  x_ds = jax.lax.reduce_window(x, init_value=0.0, computation=jax.lax.add,
-                               window_dimensions=(downsample_win, downsample_win, 1),
-                               window_strides=(downsample_win, downsample_win, 1), padding='valid')
-  maxs = jnp.max(jnp.max(x_ds, axis=1), axis=0) / (downsample_win * downsample_win)
-  mins = jnp.min(jnp.min(x_ds, axis=1), axis=0) / (downsample_win * downsample_win)
+  x_ds = compat.window_reduce_mean(x, (downsample_win, downsample_win))
+  maxs = jnp.max(jnp.max(x_ds, axis=1), axis=0)
+  mins = jnp.min(jnp.min(x_ds, axis=1), axis=0)
   ranges = maxs - mins
   gains = jnp.minimum(1.0 / ranges, max_gain)
   x = jnp.clip((x - mins), 0.0, 1.0) * gains

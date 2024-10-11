@@ -8,7 +8,7 @@ import numpy as np
 
 sys.path.append('.')
 
-from JaxVidFlow import colourspaces, utils
+from JaxVidFlow import colourspaces, compat, utils
 
 class VideoWriter:
   def __init__(self, filename: str, frame_rate: float, pixfmt: str,
@@ -95,11 +95,12 @@ class VideoWriter:
     # First, RGB to YUV.
     yuv = colourspaces.RGB2YUV(rgb_frame)
 
-    # Convert to uint8 (TODO: add uint16 support for 10-bit).
-    yuv = jnp.round(yuv * 255).astype(jnp.uint8)
-
     # Then we subsample U and V. Take upper left for now. This may or may not be standard, but close enough.
-    uv = yuv[0::2, 0::2, 1:]
-    y = yuv[:, :, 0]
+    # uv = yuv[0::2, 0::2, 1:]
+    uv = compat.window_reduce_mean(yuv[:, :, 1:], (2, 2))
+
+    # Convert to uint8 (TODO: add uint16 support for 10-bit)
+    uv = jnp.round(uv * 255).astype(jnp.uint8)
+    y = jnp.round(yuv[:, :, 0] * 255).astype(jnp.uint8)
 
     return y, uv

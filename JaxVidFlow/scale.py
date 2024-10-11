@@ -5,6 +5,8 @@ from typing import Sequence
 import jax
 from jax import numpy as jnp
 
+from JaxVidFlow import compat
+
 def _nearest_multiple_of(x: float, multiple_of: int) -> int:
   return int(round(x / multiple_of)) * multiple_of
 
@@ -35,11 +37,7 @@ def scale_image(img: jnp.ndarray, new_width: int | None = None, new_height: int 
   height_ds_factor = max(int(math.floor(old_height / new_height)), 1)
   width_ds_factor = max(int(math.floor(old_width / new_width)), 1)
   if height_ds_factor >= 2 or width_ds_factor >= 2:
-    window = (height_ds_factor, width_ds_factor, 1)
-    img = jax.lax.reduce_window(img,
-      init_value=0.0, computation=jax.lax.add,
-      window_dimensions=window,
-      window_strides=window, padding='valid') / height_ds_factor / width_ds_factor
+    img = compat.window_reduce_mean(img, (height_ds_factor, width_ds_factor))
   # Now we do the filter-based stuff if necessary.
   if img.shape[:2] != (new_height, new_width):
     img = jax.image.resize(img, (new_height, new_width, img.shape[2]), method=filter_method)
