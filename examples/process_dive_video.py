@@ -44,9 +44,8 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(encoding='utf-8', level=logging.INFO,
                     format='%(asctime)s.%(msecs)04d:%(filename)s:%(funcName)s:%(lineno)s:%(levelname)s: %(message)s',)
 
-
 # Approximately equivalent to for benchmarking purposes:
-# ffmpeg -i test_files/dji_dlogm_street.mp4 -vf "normalize,format=yuv420p" -c:v hevc_nvenc -f null -
+# ffmpeg -i test_files/lionfish.mp4 -vf "scale=1920:-1,normalize,format=yuv420p" -c:v hevc_videotoolbox -f null -
 @functools.partial(jax.jit, static_argnames=['frame_format'])
 def process_frame(raw_frame, last_frame_gains, last_frame_gains_valid, frame_format: str) -> tuple[jnp.ndarray, jnp.ndarray]:
   frame_in = VideoReader.DecodeFrame(raw_frame, frame_format)
