@@ -33,8 +33,9 @@ from tqdm import tqdm
 
 sys.path.append('.')
 
-from JaxVidFlow import colourspaces, compat, lut, nlmeans, scale, utils
+from JaxVidFlow import colourspaces, compat, lut, nlmeans, normalize, scale, utils
 from JaxVidFlow.config import Config
+from JaxVidFlow.types import FT
 from JaxVidFlow.video_reader import VideoReader
 from JaxVidFlow.video_writer import VideoWriter
 
@@ -44,28 +45,17 @@ logging.basicConfig(encoding='utf-8', level=logging.INFO,
                     format='%(asctime)s.%(msecs)04d:%(filename)s:%(funcName)s:%(lineno)s:%(levelname)s: %(message)s',)
 
 
-def normalize(x: jnp.ndarray, max_gain: float = 200.0, downsample_win: int = 8):
-  # Ideally we want to use quantiles here to reduce the effect of noise, but quantiles are very slow
-  # on GPU, so let's just do a downsample (reduce mean) instead.
-  x_ds = compat.window_reduce_mean(x, (downsample_win, downsample_win))
-  maxs = jnp.max(jnp.max(x_ds, axis=1), axis=0)
-  mins = jnp.min(jnp.min(x_ds, axis=1), axis=0)
-  ranges = maxs - mins
-  gains = jnp.minimum(1.0 / ranges, max_gain)
-  x = jnp.clip((x - mins), 0.0, 1.0) * gains
-  return x
-
-
 # Approximately equivalent to for benchmarking purposes:
-# ffmpeg -i test_files/dji_dlogm_street.mp4 -vf "lut3d=file=luts/D_LOG_M_to_Rec_709_LUT_ZG_Rev1.cube:interp=trilinear,nlmeans=s=8.0:p=3:r=5,format=yuv420p" -c:v hevc_nvenc -f null -
+# ffmpeg -i test_files/dji_dlogm_street.mp4 -vf "normalize,format=yuv420p" -c:v hevc_nvenc -f null -
 @functools.partial(jax.jit, static_argnames=['frame_format'])
-def process_frame(raw_frame, frame_format: str) -> jnp.ndarray:
+def process_frame(raw_frame, last_frame_gains, last_frame_gains_valid, frame_format: str) -> tuple[jnp.ndarray, jnp.ndarray]:
   frame_in = VideoReader.DecodeFrame(raw_frame, frame_format)
   frame = colourspaces.Rec709ToLinear(frame_in)
-  frame = normalize(frame)
+  frame, last_frame_gains = normalize.normalize(
+      img=frame, last_frame_gains=last_frame_gains, last_frame_gains_valid=last_frame_gains_valid)
   frame = colourspaces.LinearToRec709(frame)
   frame = utils.MergeSideBySide(frame_in, frame)
-  return VideoWriter.EncodeFrame(frame)
+  return VideoWriter.EncodeFrame(frame), last_frame_gains
 
 
 def calculate_nlmeans_params(raw_frame, frame_format: str) -> frozenset[str, int]:
@@ -86,7 +76,7 @@ def main():
     jax.config.update('jax_platform_name', 'cpu')
 
   video_reader = VideoReader(filename='test_files/lionfish.mp4',
-                             scale_width=1920)
+                             scale_width=1280)
 
   codec_name, codec_options = utils.FindCodec(config.encoders)
 
@@ -94,6 +84,8 @@ def main():
     jax.profiler.start_trace("/tmp/jax-trace", create_perfetto_link=True)
 
   sharding = None
+  
+  last_frame_gains = jnp.zeros(3, dtype=FT())
 
   with VideoWriter(filename='test_out.mp4',
                    frame_rate=video_reader.frame_rate(),
@@ -114,7 +106,10 @@ def main():
       raw_frame = y, u, v
 
       # Submit a processing call to the GPU.
-      frame = process_frame(raw_frame, frame_format)
+      last_frame_gains_valid = jnp.ones(3, dtype=FT()) if frame_i > 0 else jnp.zeros(3, dtype=FT())
+      frame, last_frame_gains = process_frame(
+        raw_frame=raw_frame, last_frame_gains=last_frame_gains,
+        last_frame_gains_valid=last_frame_gains_valid, frame_format=frame_format)
 
       video_writer.add_frame(encoded_frame=frame)
       video_writer.write_audio_packets(audio_packets=video_reader.audio_packets(),
