@@ -127,7 +127,7 @@ class Gyroflow:
 
     np_out_frame = np.ctypeslib.as_array(out_frame).view(np.uint8).reshape((height, width, 4))
 
-    return jnp.reshape(np_out_frame, frame.shape)
+    return jnp.asarray(np_out_frame, device=frame.device)
 
   def __del__(self):
     if self._instance is not None:
