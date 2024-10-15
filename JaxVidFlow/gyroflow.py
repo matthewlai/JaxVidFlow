@@ -111,6 +111,7 @@ class Gyroflow:
   def process_frame(self, frame: jnp.ndarray, frame_time: float):
     assert frame.shape[2] == 4, 'Gyroflow expects ARGB packed'
     height, width = frame.shape[:2]
+    assert frame.dtype == np.uint8
 
     if self._instance is None:
       self._instance = self._lib.f0r_construct(width, height)
