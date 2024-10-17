@@ -122,7 +122,7 @@ class VideoReader:
     u = jnp.reshape(u, (height // 2, width // 2))
     v = jnp.reshape(v, (height // 2, width // 2))
 
-    return (y, u, v), frame.format.name
+    return VideoReader.DecodeFrame((y, u, v), frame.format.name)
 
   @staticmethod
   @functools.partial(jax.jit, static_argnames=['frame_format'])

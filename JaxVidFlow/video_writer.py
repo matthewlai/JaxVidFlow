@@ -32,12 +32,7 @@ class VideoWriter:
     if self.waiting_for_first_frame:
       self.waiting_for_first_frame = False
       # Get width and height from the frame.
-
-      # Here the frame has already been encoded in a stacked way that libAV expects, with
-      # shape[0] = height (y) + height / 4 (u) + height / 4 (v)
-      # shape[1] = width
-      width = encoded_frame[0].shape[1]
-      height = encoded_frame[0].shape[0]
+      width, height = encoded_frame.shape[1], encoded_frame.shape[0]
 
       self.out_video_stream.width = width
       self.out_video_stream.height = height
@@ -56,7 +51,7 @@ class VideoWriter:
       for packet in self.out_video_stream.encode(new_frame):
         self.out_container.mux(packet)
 
-    self.last_frame = encoded_frame
+    self.last_frame = VideoWriter.EncodeFrame(encoded_frame) if encoded_frame is not None else None
 
   def frame_format(self) -> str:
     return self.out_video_stream.pix_fmt

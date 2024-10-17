@@ -63,40 +63,11 @@ def _video_decode():
   duration = time.time() - start_time
   print(f' {i} frames in {duration:.2f}s ({i / duration:.2f} fps, {duration / i * 1000:.2f}ms/frame)')
 
-def _video_transcode():
-  start_time = time.time()
-  video_reader = VideoReader(filename='test_files/lionfish.mp4', scale_width=4096)
-
-  codec_name, codec_options = utils.FindCodec(_CODEC_PREFERENCES)
-  print(f' Using {codec_name}')
-  with jax.default_device(jax.devices('cpu')[0]):
-    with VideoWriter(filename='test_out.mp4',
-                     frame_rate=video_reader.frame_rate(),
-                     pixfmt='yuv420p',
-                     codec_name=codec_name,
-                     codec_options=codec_options) as video_writer:
-      for i, frame_data in enumerate(video_reader):
-        raw_frame, frame_format = frame_data
-        y, u, v = raw_frame
-        uv = jnp.stack((u, v), axis=2)
-        video_writer.add_frame(encoded_frame=(y, uv))
-        if i > 100:
-          break
-    os.remove('test_out.mp4')
-
-  duration = time.time() - start_time
-  print(f' {i} frames in {duration:.2f}s ({i / duration:.2f} fps, {duration / i * 1000:.2f}ms/frame)')
-
 def _video_transcode_rgb():
   video_reader = VideoReader(filename='test_files/lionfish.mp4', scale_width=4096)
 
   codec_name, codec_options = utils.FindCodec(_CODEC_PREFERENCES)
   print(f' Using {codec_name}')
-
-  @functools.partial(jax.jit, static_argnames=['frame_format'])
-  def process_frame(raw_frame, frame_format: str) -> jnp.ndarray:
-    frame_in = VideoReader.DecodeFrame(raw_frame, frame_format)
-    return VideoWriter.EncodeFrame(frame_in)
 
   with VideoWriter(filename='test_out.mp4',
                    frame_rate=video_reader.frame_rate(),
@@ -104,13 +75,10 @@ def _video_transcode_rgb():
                    codec_name=codec_name,
                    codec_options=codec_options) as video_writer:
     for i, frame_data in enumerate(video_reader):
-      raw_frame, frame_format = frame_data
       if i == 0:
-        frame = process_frame(raw_frame, frame_format)
-        for f in frame:
-          f.block_until_ready()
+        frame_data.block_until_ready()
         start_time = time.time()
-      video_writer.add_frame(encoded_frame=process_frame(raw_frame, frame_format))
+      video_writer.add_frame(encoded_frame=frame_data)
       if i > 100:
         break
   os.remove('test_out.mp4')
@@ -181,8 +149,6 @@ def main():
 
   print(_pad_to_len('Video Decode (4k)'))
   _video_decode()
-  print(_pad_to_len('Video Transcode (4k)'))
-  _video_transcode()
   print(_pad_to_len('Video Transcode with RGB conversions (4k)'))
   _video_transcode_rgb()
   if not is_cpu:

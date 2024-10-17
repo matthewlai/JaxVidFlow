@@ -46,15 +46,14 @@ logging.basicConfig(encoding='utf-8', level=logging.INFO,
 
 # Approximately equivalent to for benchmarking purposes:
 # ffmpeg -i test_files/lionfish.mp4 -vf "scale=1920:-1,normalize,format=yuv420p" -c:v hevc_videotoolbox -f null -
-@functools.partial(jax.jit, static_argnames=['frame_format'])
-def process_frame(raw_frame, last_frame_gains, last_frame_gains_valid, frame_format: str) -> tuple[jnp.ndarray, jnp.ndarray]:
-  frame_in = VideoReader.DecodeFrame(raw_frame, frame_format)
+@functools.partial(jax.jit, static_argnames=[])
+def process_frame(frame_in, last_frame_gains, last_frame_gains_valid) -> tuple[jnp.ndarray, jnp.ndarray]:
   frame = colourspaces.Rec709ToLinear(frame_in)
   frame, last_frame_gains = normalize.normalize(
       img=frame, last_frame_gains=last_frame_gains, last_frame_gains_valid=last_frame_gains_valid)
   frame = colourspaces.LinearToRec709(frame)
   frame = utils.MergeSideBySide(frame_in, frame)
-  return VideoWriter.EncodeFrame(frame), last_frame_gains
+  return frame, last_frame_gains
 
 
 def calculate_nlmeans_params(raw_frame, frame_format: str) -> frozenset[str, int]:
@@ -92,23 +91,16 @@ def main():
                    codec_name=codec_name,
                    codec_options=codec_options) as video_writer:
     for frame_i, frame_data in tqdm(enumerate(video_reader), unit=' frames'):
-      raw_frame, frame_format = frame_data
-
-      y, u, v = raw_frame
-
       if sharding is None:
-        sharding = utils.GetSharding(num_devices_limit=None, divisor_of=y.shape[0])
+        sharding = utils.GetSharding(num_devices_limit=None, divisor_of=frame_data.shape[0])
 
-      y = jax.device_put(y, sharding)
-      u = jax.device_put(u, sharding)
-      v = jax.device_put(v, sharding)
-      raw_frame = y, u, v
+      frame_data = jax.device_put(frame_data, sharding)
 
       # Submit a processing call to the GPU.
       last_frame_gains_valid = jnp.ones(3, dtype=FT()) if frame_i > 0 else jnp.zeros(3, dtype=FT())
       frame, last_frame_gains = process_frame(
-        raw_frame=raw_frame, last_frame_gains=last_frame_gains,
-        last_frame_gains_valid=last_frame_gains_valid, frame_format=frame_format)
+        frame_in=frame_data, last_frame_gains=last_frame_gains,
+        last_frame_gains_valid=last_frame_gains_valid)
 
       video_writer.add_frame(encoded_frame=frame)
       video_writer.write_audio_packets(audio_packets=video_reader.audio_packets(),
