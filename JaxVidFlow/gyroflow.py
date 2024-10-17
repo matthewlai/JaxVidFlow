@@ -109,7 +109,7 @@ class Gyroflow:
     raise ValueError(f'Unknown param: {name}')
 
   def process_frame(self, frame: jnp.ndarray, frame_time: float):
-    assert frame.shape[2] == 4, 'Gyroflow expects ARGB packed'
+    assert frame.shape[2] == 4, 'Gyroflow expects RGBA packed'
     height, width = frame.shape[:2]
     assert frame.dtype == np.uint8
 
