@@ -27,12 +27,12 @@ class VideoWriter:
 
     self._non_video_streams = []
 
-  def add_frame(self, encoded_frame):
-    """Add a raw frame already encoded using EncodeFrame()."""
+  def add_frame(self, frame):
+    """Add an RGB frame."""
     if self.waiting_for_first_frame:
       self.waiting_for_first_frame = False
       # Get width and height from the frame.
-      width, height = encoded_frame.shape[1], encoded_frame.shape[0]
+      width, height = frame.shape[1], frame.shape[0]
 
       self.out_video_stream.width = width
       self.out_video_stream.height = height
@@ -51,7 +51,7 @@ class VideoWriter:
       for packet in self.out_video_stream.encode(new_frame):
         self.out_container.mux(packet)
 
-    self.last_frame = VideoWriter.EncodeFrame(encoded_frame) if encoded_frame is not None else None
+    self.last_frame = VideoWriter.EncodeFrame(frame) if frame is not None else None
 
   def frame_format(self) -> str:
     return self.out_video_stream.pix_fmt

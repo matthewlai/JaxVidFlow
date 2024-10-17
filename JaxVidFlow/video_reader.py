@@ -88,7 +88,7 @@ class VideoReader:
   def __iter__(self):
     return self
 
-  def __next__(self) -> tuple[tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray], str]:
+  def __next__(self) -> tuple[jnp.ndarray, str]:
     """This returns a frame in native encoding and associated format. Use DecodeFrame() to decode into normalized RGB floats."""
 
     # Decode is driven by the video stream. We always decode until we get some video frames, and just store the audio packets along
