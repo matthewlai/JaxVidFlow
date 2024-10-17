@@ -4,10 +4,6 @@ import sys
 
 import numpy as np
 
-if platform.system() == 'Darwin':
-  # Required for Jax on Metal (https://developer.apple.com/metal/jax/):
-  os.environ['ENABLE_PJRT_COMPATIBILITY'] = '1'
-
 sys.path.append('.')
 
 from JaxVidFlow import colourspaces

@@ -2,10 +2,6 @@ import os
 import platform
 import sys
 
-if platform.system() == 'Darwin':
-  # Required for Jax on Metal (https://developer.apple.com/metal/jax/):
-  os.environ['ENABLE_PJRT_COMPATIBILITY'] = '1'
-
 import jax
 from jax import numpy as jnp
 import numpy as np

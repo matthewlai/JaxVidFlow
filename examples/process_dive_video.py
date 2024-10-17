@@ -11,10 +11,6 @@ from typing import Any, Generator, Sequence
 
 import psutil
 
-if platform.system() == 'Darwin':
-  # Required for Jax on Metal (https://developer.apple.com/metal/jax/):
-  os.environ['ENABLE_PJRT_COMPATIBILITY'] = '1'
-
 os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
 
 xla_flags = {
