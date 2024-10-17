@@ -74,9 +74,11 @@ def main():
     jax.config.update('jax_platform_name', 'cpu')
 
   video_reader = VideoReader(filename='test_files/lionfish.mp4',
-                             scale_width=1280)
+                             scale_width=1920)
 
   codec_name, codec_options = utils.FindCodec(config.encoders)
+
+  print(f'Using {codec_name} ({codec_options})')
 
   if config.profiling:
     jax.profiler.start_trace("/tmp/jax-trace", create_perfetto_link=True)
@@ -85,7 +87,7 @@ def main():
   
   last_frame_gains = jnp.zeros(3, dtype=FT())
 
-  with VideoWriter(filename='test_out.mp4',
+  with VideoWriter(filename='test_out/test_out.mp4',
                    frame_rate=video_reader.frame_rate(),
                    pixfmt='yuv420p',
                    codec_name=codec_name,

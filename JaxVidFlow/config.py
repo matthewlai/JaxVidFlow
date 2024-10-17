@@ -14,8 +14,12 @@ class Config:
     default_factory=lambda: [
       # Test: ffmpeg -i test_files/dolphin_4096.mp4 -c:v {encoder_name} -f null -
 
-      # Apple (TODO: Find good default params)
-      ('hevc_videotoolbox', None),
+      (
+        'hevc_videotoolbox',
+        # Videotoolbox supports constant quality mode on Apple Silicon, but uses the global quality scale
+        # mechanism that doesn't seem to be supported in PyAV yet, so we have to just use bit rate control for now.
+        None,
+      ),
       
       # NVIDIA
       ( 
@@ -29,8 +33,15 @@ class Config:
         }
       ),
 
-      # Software fallback (library defaults are as good as any)
-      ('hevc', None),
+      # TODO: Add AMD and Intel encoders.
+
+      # Software fallback.
+      (
+        'h264',
+        {
+          'crf': '20'
+        }
+      ),
   ])
 
   force_cpu_backend: bool = False

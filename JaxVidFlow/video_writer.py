@@ -11,14 +11,20 @@ sys.path.append('.')
 from JaxVidFlow import colourspaces, compat, utils
 
 class VideoWriter:
+  # Note: Target bitrate is usually overridden by codec-specific constant quality control. One
+  # exception is videotoolbox, which does support constant quality, but it uses the global quality scale
+  # mechanism that's not yet implemented in PyAV.
   def __init__(self, filename: str, frame_rate: float, pixfmt: str,
-         codec_name: str, codec_options: dict[str, str] | None):
+         codec_name: str, codec_options: dict[str, str] | None, target_bitrate: int = 50000000):
     self.out_container = av.open(filename, 'w', options={'movflags': 'faststart'})
     self.out_video_stream = self.out_container.add_stream(
       codec_name=codec_name, rate=frame_rate, options=codec_options)
     self.out_audio_stream = None
     self.out_video_stream.pix_fmt = pixfmt
     self.out_codec_context = self.out_video_stream.codec_context
+
+    # Sane default bit rate (usually overridden using codec-specific constant quality control).
+    self.out_codec_context.bit_rate = target_bitrate
 
     # When we write frames we delay by one to prevent a GPU sync.
     self.last_frame = None
