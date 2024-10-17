@@ -26,6 +26,10 @@ class VideoWriter:
     # Sane default bit rate (usually overridden using codec-specific constant quality control).
     self.out_codec_context.bit_rate = target_bitrate
 
+    # Hack for HEVC videos to play on Apple.
+    if 'hevc' in codec_name:
+      self.out_codec_context.codec_tag = 'hvc1'
+
     # When we write frames we delay by one to prevent a GPU sync.
     self.last_frame = None
 
