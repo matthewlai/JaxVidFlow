@@ -102,7 +102,7 @@ def main():
         frame_in=frame_data, last_frame_gains=last_frame_gains,
         last_frame_gains_valid=last_frame_gains_valid)
 
-      video_writer.add_frame(encoded_frame=frame)
+      video_writer.add_frame(frame=frame)
       video_writer.write_audio_packets(audio_packets=video_reader.audio_packets(),
                                        in_audio_stream=video_reader.audio_stream())
       video_reader.clear_audio_packets()

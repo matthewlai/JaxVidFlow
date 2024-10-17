@@ -78,7 +78,7 @@ def _video_transcode_rgb():
       if i == 0:
         frame_data.block_until_ready()
         start_time = time.time()
-      video_writer.add_frame(encoded_frame=frame_data)
+      video_writer.add_frame(frame=frame_data)
       if i > 100:
         break
   os.remove('test_out.mp4')
