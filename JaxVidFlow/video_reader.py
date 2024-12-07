@@ -42,19 +42,24 @@ class VideoReader:
     self._decoded_frames = queue.Queue()
     self._audio_packets = []
 
-    logger.info('Streams:')
+    side_data = self.in_video_stream.side_data
+    self._rotation = 0
+    if 'DISPLAYMATRIX' in side_data:
+      self._rotation = side_data['DISPLAYMATRIX']
+
+    logger.debug('Streams:')
     for i, stream in enumerate(self.in_container.streams):
-      logger.info(f'  {i}: {stream.type}')
+      logger.debug(f'  {i}: {stream.type}')
       if isinstance(stream, av.video.stream.VideoStream):
         codec_context = stream.codec_context
-        logger.info(f'    {stream.format.width}x{stream.format.height}@{stream.guessed_rate}fps'
-                    f' ({stream.codec.name},{codec_context.pix_fmt})')
+        logger.debug(f'    {stream.format.width}x{stream.format.height}@{stream.guessed_rate}fps'
+                     f' ({stream.codec.name},{codec_context.pix_fmt})')
       if isinstance(stream, av.audio.stream.AudioStream):
         codec_context = stream.codec_context
-        logger.info(f'    {stream.codec.name} {codec_context.sample_rate}Hz {codec_context.layout.name}')
+        logger.debug(f'    {stream.codec.name} {codec_context.sample_rate}Hz {codec_context.layout.name}')
       if isinstance(stream, av.data.stream.DataStream):
         codec_context = stream.codec_context
-        logger.info(f'    {stream.name}')
+        logger.debug(f'    {stream.name}')
         # We don't know how to copy data streams.
 
     # Enable frame threading.
@@ -88,8 +93,8 @@ class VideoReader:
   def __iter__(self):
     return self
 
-  def __next__(self) -> tuple[jnp.ndarray, str]:
-    """This returns a frame in native encoding and associated format. Use DecodeFrame() to decode into normalized RGB floats."""
+  def __next__(self) -> tuple[jnp.ndarray, float]:
+    """This returns a frame in normalized RGB and frame time."""
 
     # Decode is driven by the video stream. We always decode until we get some video frames, and just store the audio packets along
     # the way. At the end of the demuxing demux() will generate flushing packets (with packet.dts is None). We ignore those for audio.
@@ -101,7 +106,9 @@ class VideoReader:
         for frame in packet.decode():
           self._decoded_frames.put(frame)
 
-    frame = self._decoded_frames.get().reformat(width=self._width, height=self._height)
+    frame = self._decoded_frames.get()
+
+    frame = frame.reformat(width=self._width, height=self._height)
 
     # Reading from video planes directly saves an extra copy in VideoFrame.to_ndarray.
     # Planes should be in machine byte order, which should also be what frombuffer() expects.
@@ -122,7 +129,7 @@ class VideoReader:
     u = jnp.reshape(u, (height // 2, width // 2))
     v = jnp.reshape(v, (height // 2, width // 2))
 
-    return VideoReader.DecodeFrame((y, u, v), frame.format.name)
+    return VideoReader.DecodeFrame((y, u, v), frame.format.name), frame.time, self._rotation
 
   @staticmethod
   @functools.partial(jax.jit, static_argnames=['frame_format'])

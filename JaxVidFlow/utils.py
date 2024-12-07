@@ -40,14 +40,17 @@ def EnablePersistentCache(path: str | None = None) -> None:
   jax.config.update('jax_persistent_cache_min_entry_size_bytes', -1)
   jax.config.update('jax_persistent_cache_min_compile_time_secs', 0.3)
 
-def MergeSideBySide(arr1: jnp.ndarray, arr2: jnp.ndarray) -> jnp.ndarray:
+def MergeSideBySide(arr1: jnp.ndarray, arr2: jnp.ndarray, axis=1) -> jnp.ndarray:
   arr1 = jnp.asarray(arr1)
   arr2 = jnp.asarray(arr2)
   shape = arr1.shape
   assert arr1.shape == arr2.shape
   out = arr1.copy()
-  center = shape[1] // 2
-  out = out.at[:, center:].set(arr2[:, center:])
+  center = shape[axis] // 2
+  if axis == 1:
+    out = out.at[:, center:].set(arr2[:, center:])
+  elif axis == 0:
+    out = out.at[center:, :].set(arr2[center:, :])
   return out
 
 @jax.jit

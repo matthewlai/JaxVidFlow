@@ -1,11 +1,17 @@
 import ctypes
 import functools
+import logging
 import math
-from typing import Sequence
+import os
+import shutil
+import subprocess
+from typing import Optional, Sequence
 
 import jax
 from jax import numpy as jnp
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # pub struct f0r_plugin_info {
 #     /// < The (short) name of the plugin
@@ -62,6 +68,28 @@ def _debug_print_structure(s):
     print(f'{field[0]}: {getattr(s, field[0])}')
 
 @functools.cache
+def _find_gyroflow(suggestion: str | None = None) -> Optional[str]:
+  candidates = [
+    # MacOS.
+    '/Applications/Gyroflow.app/Contents/MacOS/gyroflow',
+
+    # In PATH.
+    'gyroflow'
+
+    # TODO: What do we do for Windows?
+  ]
+
+  if suggestion is not None:
+    candidates = [suggestion] + candidates
+
+  for candidate in candidates:
+    candidate = shutil.which(candidate)
+    if os.path.exists(candidate):
+      logger.info(f'Gyroflow binary found at: {candidate}')
+      return candidate
+  return None
+
+@functools.cache
 def _load_lib(path: str):
   lib = ctypes.CDLL(path)
   lib.f0r_get_plugin_info.argtypes = [ctypes.POINTER(f0r_plugin_info)]
@@ -82,8 +110,40 @@ def _load_lib(path: str):
 
   return lib
 
+def gyroflow_create_project_file(video_path: str, preset: str = '',
+                                 gyroflow_path: str | None = None) -> str:
+  gf_path = _find_gyroflow(suggestion=gyroflow_path)
+  # Gyroflow seems to only work with absolute paths.
+  logger.info('Gyroflow analysing motion')
+  video_path = os.path.abspath(video_path)
+  args = [gf_path, video_path, '--export-project', '3']
+  if preset:
+    args.extend(['--preset', preset])
+  try:
+    res = subprocess.run(args, capture_output=True, encoding='utf-8', timeout=10.0)
+  except subprocess.TimeoutExpired as e:
+    logger.error(f'Gyroflow timeout, output:')
+    logger.error(e.output.decode('utf-8'))
+  assert res.returncode == 0, f'Gyroflow returned {res.returncode}'
+
+  root, ext = os.path.splitext(video_path)
+  gyroflow_project_path = root + '.gyroflow'
+  assert os.path.exists(gyroflow_project_path)
+  logger.info('Gyroflow analysis done')
+  return gyroflow_project_path
+
+@jax.jit
+def to_gyroflow(frame: jnp.ndarray) -> jnp.ndarray:
+  # Gyroflow requires uint8 RGBA packed.
+  frame = (frame * 255).astype(jnp.uint8)
+  return jnp.pad(frame, pad_width=((0, 0), (0, 0), (0, 1)), constant_values=255)
+
+@jax.jit
+def from_gyroflow(frame: jnp.ndarray) -> jnp.ndarray:
+  return frame[:, :, :3].astype(jnp.float32) / 255.0
+
 class Gyroflow:
-  def __init__(self, gyroflow_lib_path: str, gyroflow_project_path: str):
+  def __init__(self, gyroflow_project_path: str, gyroflow_lib_path: str | None = None):
     self._lib = _load_lib(gyroflow_lib_path)
 
     plugin_info = f0r_plugin_info()
@@ -102,18 +162,24 @@ class Gyroflow:
     self._instance = None
     self._project_path = gyroflow_project_path
 
+    # We delay by one frame to avoid unnecessary GPU sync.
+    self._last_frame = None
+    self._last_frame_time = None
+
   def _find_param_index(self, name) -> int:
     for i, (param_name, _) in enumerate(self._param_infos):
       if param_name == name:
         return i
     raise ValueError(f'Unknown param: {name}')
 
-  def process_frame(self, frame: jnp.ndarray, frame_time: float):
-    assert frame.shape[2] == 4, 'Gyroflow expects RGBA packed'
-    height, width = frame.shape[:2]
-    assert frame.dtype == np.uint8
+  def process_frame(self, frame: jnp.ndarray | None, frame_time: float | None, rotation: int) -> jnp.ndarray | None:
+    if frame is not None:
+      assert frame.shape[2] == 4 and frame.dtype == jnp.uint8, 'Gyroflow expects RGBA packed. Use gyroflow.to_gyroflow()/from_gyroflow() to convert.'
+      assert frame_time is not None
 
     if self._instance is None:
+      assert frame is not None
+      height, width = frame.shape[:2]
       self._instance = self._lib.f0r_construct(width, height)
       path_bytes = self._project_path.encode('utf-8')
       ArgType = ctypes.c_char_p * 1
@@ -121,14 +187,26 @@ class Gyroflow:
       arg[0] = path_bytes
       self._lib.f0r_set_param_value.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_char_p), ctypes.c_int]
       self._lib.f0r_set_param_value(self._instance, arg, self._find_param_index('Project'))
-    OutFrameType = ctypes.c_uint32 * (width * height)
-    out_frame = OutFrameType()
-    in_frame = ctypes.cast(frame.tobytes(), ctypes.POINTER(ctypes.c_uint32))
-    self._lib.f0r_update(self._instance, frame_time, in_frame, out_frame)
 
-    np_out_frame = np.ctypeslib.as_array(out_frame).view(np.uint8).reshape((height, width, 4))
+    ret = None
 
-    return jnp.asarray(np_out_frame, device=frame.device)
+    if self._last_frame is not None:
+      height, width = self._last_frame.shape[:2]
+      OutFrameType = ctypes.c_uint32 * (width * height)
+      out_frame = OutFrameType()
+      in_frame = ctypes.cast(self._last_frame.tobytes(), ctypes.POINTER(ctypes.c_uint32))
+      self._lib.f0r_update(self._instance, self._last_frame_time, in_frame, out_frame)
+
+      np_out_frame = np.ctypeslib.as_array(out_frame).view(np.uint8).reshape((height, width, 4))
+
+      ret = jnp.asarray(np_out_frame, device=frame.device)
+    else:
+      ret = None
+
+    self._last_frame = frame
+    self._last_frame_time = frame_time
+
+    return ret
 
   def __del__(self):
     if self._instance is not None:

@@ -21,7 +21,7 @@ def _lut_impl(lower: jnp.ndarray, higher: jnp.ndarray, frac: jnp.ndarray, lut: j
 def apply_lut(frame: jnp.ndarray, lut_path: str) -> jnp.ndarray:
   assert not compat.is_metal(), "This implementation crashes METAL. See https://github.com/jax-ml/jax/issues/23902"
 
-  title = None
+  title = ''
   size = 0
   entries = []
   with open(lut_path, 'r') as lut_file:
@@ -31,11 +31,9 @@ def apply_lut(frame: jnp.ndarray, lut_path: str) -> jnp.ndarray:
       elif line.startswith('LUT_3D_SIZE'):
         size = int(line[12:])
       else:
-        parts = line.split(' ')
+        parts = line.split()
         if len(parts) == 3:
           entries.append(np.array([float(x) for x in parts]))
-  if title is None:
-    raise RuntimeError('LUT file doesn\'t have a title?')
   if size == 0:
     raise RuntimeError('No LUT_3D_SIZE in LUT file.')
   logger.info(f'Using {lut_path} ({title}) Size: {size}')

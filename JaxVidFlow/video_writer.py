@@ -1,5 +1,6 @@
 import functools
 import sys
+from typing import Sequence
 
 import av
 import jax
@@ -76,12 +77,15 @@ class VideoWriter:
   def __enter__(self):
     return self
 
-  def __exit__(self, type, value, traceback):
+  def close(self):
     # Encode the last frame.
     self.add_frame(None)
     for packet in self.out_video_stream.encode():
       self.out_container.mux(packet)
     self.out_container.close()
+
+  def __exit__(self, type, value, traceback):
+    self.close()
 
   @staticmethod
   def test_codec(codec_name: str) -> bool:
