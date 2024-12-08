@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "JaxVidFlow"
+version = "0.0.1"
+authors = [
+  { name="Matthew Lai", email="m@matthewlai.ca" },
+]
+description = "Video processing library using JAX."
+readme = "README.md"
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+]
+dependencies = [
+  "jax",
+  "numpy",
+  "av",
+  "scipy",
+  "tqdm",
+]
+
+[project.urls]
+Homepage = "https://github.com/matthewlai/JaxVidFlow"
+Issues = "https://github.com/matthewlai/JaxVidFlow/issues"
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+  "*.mp4",
+]
