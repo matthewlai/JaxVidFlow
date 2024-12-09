@@ -30,7 +30,7 @@ import numpy as np
 from PIL import Image
 from tqdm import tqdm
 
-sys.path.append('.')
+sys.path.append('src')
 
 from JaxVidFlow import colourspaces, compat, gyroflow, lut, nlmeans, normalize, scale, utils
 from JaxVidFlow.config import Config
@@ -87,13 +87,6 @@ def process_frame(frame, carry, output_for_gyroflow: bool, rotation: int) -> tup
     frame_out = gyroflow.to_gyroflow(frame_out)
   return frame_out, ref, (last_frame_mins, last_frame_maxs)
 
-
-def calculate_nlmeans_params(raw_frame, frame_format: str) -> frozenset[str, int]:
-  frame_in = VideoReader.DecodeFrame(raw_frame, frame_format)
-  frame = colourspaces.Rec709ToLinear(frame_in)
-  print(f'First frame sigma: {np.array(utils.EstimateNoiseSigma(frame))}')
-  return frozenset(nlmeans.default_nlmeans_params(frame).items())
-
 def process_video(input_path: str, output_path: str, codec_name, codec_options, comparison_out):
   video_reader = VideoReader(filename=input_path, scale_width=1920)
 
@@ -121,8 +114,8 @@ def process_video(input_path: str, output_path: str, codec_name, codec_options, 
                    codec_name=codec_name,
                    codec_options=codec_options) as video_writer:
     carry = None
-    for frame_i, frame_data in tqdm(enumerate(video_reader), unit=' frames'):
-      frame, frame_time, rotation = frame_data
+    for frame_i, frame in tqdm(enumerate(video_reader), unit=' frames'):
+      frame, frame_time, rotation = frame.data, frame.frame_time, frame.rotation
 
       if sharding is None:
         sharding = utils.GetSharding(num_devices_limit=None, divisor_of=frame.shape[0])

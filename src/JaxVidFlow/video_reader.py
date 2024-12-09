@@ -1,5 +1,8 @@
+import dataclasses
+import fractions
 import functools
 import logging
+import math
 import queue
 import sys
 from typing import Any, Sequence
@@ -31,6 +34,13 @@ def undo_2x2subsample(x: jnp.ndarray) -> jnp.ndarray:
   x = jnp.repeat(x, repeats=2, axis=len(x.shape) - 1, total_repeat_length=width)
   x = jnp.repeat(x, repeats=2, axis=len(x.shape) - 2, total_repeat_length=height)
   return x
+
+
+@dataclasses.dataclass
+class Frame:
+  data: jnp.ndarray
+  frame_time: float
+  rotation: int
 
 
 class VideoReader:
@@ -72,14 +82,36 @@ class VideoReader:
         old_width=self._width, old_height=self._height,
         multiple_of=8, new_width=scale_width, new_height=scale_height)
 
+    # Frame time of the last decoded frame.
+    self._last_frame_time = 0.0
+
   def width(self) -> int:
     return self._width
 
   def height(self) -> int:
     return self._height
 
-  def frame_rate(self) -> float:
+  def frame_rate(self) -> fractions.Fraction:
     return self.in_video_stream.guessed_rate
+
+  def num_frames(self) -> int:
+    return self.in_video_stream.frames
+
+  def duration(self) -> float:
+    return float(self.in_video_stream.duration * self.in_video_stream.time_base)
+
+  def seek(self, desired_frame_time):
+    # Move the decoder so that __next__() returns the frame closest to the desired_frame_time.
+    offset = math.floor(desired_frame_time / self.in_video_stream.time_base)
+    self.in_container.seek(offset=offset, stream=self.in_video_stream)
+    while not self._decoded_frames.empty():
+      self._decoded_frames.get()
+    frame = self._next_frame()
+    assert frame.time <= desired_frame_time
+    while frame.time < desired_frame_time:
+      frame = self._next_frame()
+    # Pop the last frame back into the queue.
+    self._decoded_frames.put(frame)
 
   def audio_packets(self) -> Sequence[Any]:
     return self._audio_packets
@@ -93,9 +125,7 @@ class VideoReader:
   def __iter__(self):
     return self
 
-  def __next__(self) -> tuple[jnp.ndarray, float]:
-    """This returns a frame in normalized RGB and frame time."""
-
+  def _next_frame(self):
     # Decode is driven by the video stream. We always decode until we get some video frames, and just store the audio packets along
     # the way. At the end of the demuxing demux() will generate flushing packets (with packet.dts is None). We ignore those for audio.
     while self._decoded_frames.empty():
@@ -105,8 +135,12 @@ class VideoReader:
       if packet.stream == self.in_video_stream:
         for frame in packet.decode():
           self._decoded_frames.put(frame)
+    return self._decoded_frames.get()
 
-    frame = self._decoded_frames.get()
+  def __next__(self) -> tuple[jnp.ndarray, float]:
+    """This returns a frame in normalized RGB and frame time."""
+
+    frame = self._next_frame()
 
     frame = frame.reformat(width=self._width, height=self._height)
 
@@ -129,7 +163,12 @@ class VideoReader:
     u = jnp.reshape(u, (height // 2, width // 2))
     v = jnp.reshape(v, (height // 2, width // 2))
 
-    return VideoReader.DecodeFrame((y, u, v), frame.format.name), frame.time, self._rotation
+    self._last_frame_time = frame.time
+
+    return Frame(
+        data=VideoReader.DecodeFrame((y, u, v), frame.format.name),
+        frame_time=frame.time,
+        rotation=self._rotation)
 
   @staticmethod
   @functools.partial(jax.jit, static_argnames=['frame_format'])
