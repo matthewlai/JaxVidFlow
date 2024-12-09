@@ -25,7 +25,8 @@ def test_normalize():
     
     normalized_img, mins, maxs = normalize.normalize(
         img=img, last_frame_mins=None, last_frame_maxs=None,
-        temporal_smoothing=1.0, max_gain=10.0, downsample_win=1)
+        temporal_smoothing=1.0, max_gain=10.0, downsample_win=1,
+        quantile_low=0.0, quantile_high=1.0, whitepoint=1.0, blackpoint=0.0)
     np.testing.assert_allclose(
         maxs,
         np.array(0.4), atol=1e-4)
@@ -46,7 +47,8 @@ def test_normalize():
     # Force a max gain of 3.0 (instead of 3.33)
     normalized_img, mins, maxs = normalize.normalize(
         img=img, last_frame_mins=None, last_frame_maxs=None,
-        temporal_smoothing=1.0, max_gain=3.0, downsample_win=1)
+        temporal_smoothing=1.0, max_gain=3.0, downsample_win=1,
+        quantile_low=0.0, quantile_high=1.0, whitepoint=1.0, blackpoint=0.0)
     np.testing.assert_allclose(
         maxs,
         np.array(0.4), atol=1e-4)
@@ -67,7 +69,8 @@ def test_normalize():
     # With some temporal smoothing.
     normalized_img, mins, maxs = normalize.normalize(
         img=img, last_frame_mins=jnp.array([0.05]), last_frame_maxs=jnp.array([0.5]),
-        temporal_smoothing=0.1, max_gain=10.0, downsample_win=1)
+        temporal_smoothing=0.1, max_gain=10.0, downsample_win=1,
+        quantile_low=0.0, quantile_high=1.0, whitepoint=1.0, blackpoint=0.0)
     np.testing.assert_allclose(
         maxs,
         np.array(0.49), atol=1e-4)

@@ -34,3 +34,8 @@ Issues = "https://github.com/matthewlai/JaxVidFlow/issues"
 exclude = [
   "*.mp4",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "src"
+]

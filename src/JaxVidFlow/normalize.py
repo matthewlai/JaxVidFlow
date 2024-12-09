@@ -33,7 +33,8 @@ def normalize(img: jnp.ndarray, last_frame_mins: jnp.ndarray | None, last_frame_
   else:
     img_ds = img
   quantiles = jnp.quantile(img_ds, jnp.array([quantile_low, quantile_high], dtype=jnp.float32), axis=(0, 1))
-  assert quantiles.shape == (2, 3)
+  n_channels = img.shape[2]
+  assert quantiles.shape == (2, n_channels)
   mins = quantiles[0]
   maxs = quantiles[1]
   # maxs = jnp.max(img_ds, axis=(0, 1))
