@@ -114,15 +114,17 @@ class VideoReader:
     self.in_container.seek(offset=offset, stream=self.in_video_stream)
     while not self._decoded_frames.empty():
       self._decoded_frames.get()
-    frame = self._next_frame()
-    assert frame.time <= desired_frame_time
-    while frame.time < desired_frame_time:
-      try:
-        frame = self._next_frame()
-      except StopIteration:
-        break
-    # Pop the last frame back into the queue.
-    self._decoded_frames.put(frame)
+    frame = None
+    try:
+      frame = self._next_frame()
+      assert frame.time <= desired_frame_time
+      while frame.time < desired_frame_time:
+          frame = self._next_frame()
+    except StopIteration:
+      break
+    if frame is not None:
+      # Pop the last frame back into the queue.
+      self._decoded_frames.put(frame)
 
   def audio_packets(self) -> Sequence[Any]:
     return self._audio_packets
