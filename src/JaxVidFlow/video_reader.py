@@ -19,6 +19,8 @@ from JaxVidFlow.types import FT
 
 logger = logging.getLogger(__name__)
 
+_MIN_SEEK_TIME = 2.0  # If we are seeking ahead by less than this amount, just keep decoding. 2.0 is a common keyframe interval.
+
 def undo_2x2subsample(x: jnp.ndarray) -> jnp.ndarray:
   # Undo subsampling (TODO: do this properly according to spec). Here we are assuming co-located with top left and
   # doing linear interpolation.
@@ -103,6 +105,12 @@ class VideoReader:
   def seek(self, desired_frame_time):
     # Move the decoder so that __next__() returns the frame closest to the desired_frame_time.
     offset = math.floor(desired_frame_time / self.in_video_stream.time_base)
+    should_seek = False
+    if desired_frame_time < self._last_frame_time:
+      # Always seek backwards.
+      should_seek = True
+    elif (desired_frame_time - self._last_frame_time) > _MIN_SEEK_TIME:
+      should_seek = True
     self.in_container.seek(offset=offset, stream=self.in_video_stream)
     while not self._decoded_frames.empty():
       self._decoded_frames.get()

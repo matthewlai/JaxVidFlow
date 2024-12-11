@@ -28,3 +28,6 @@ def test_video_reader():
   reader.seek(0.5)
   frame = next(reader)
   assert frame.frame_time == pytest.approx(0.5, 0.1)
+  reader.seek(1.5)
+  frame = next(reader)
+  assert frame.frame_time == pytest.approx(1.5, 0.1)
