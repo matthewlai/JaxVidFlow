@@ -117,7 +117,10 @@ class VideoReader:
     frame = self._next_frame()
     assert frame.time <= desired_frame_time
     while frame.time < desired_frame_time:
-      frame = self._next_frame()
+      try:
+        frame = self._next_frame()
+      except StopIteration:
+        break
     # Pop the last frame back into the queue.
     self._decoded_frames.put(frame)
 
