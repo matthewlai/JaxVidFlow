@@ -119,7 +119,7 @@ class VideoReader:
       frame = self._next_frame()
       assert frame.time <= desired_frame_time
       while frame.time < desired_frame_time:
-          frame = self._next_frame()
+        frame = self._next_frame()
     except StopIteration:
       pass
     if frame is not None:
