@@ -24,8 +24,8 @@ You can run benchmarks.py to see how fast things are, but it doesn't really have
 ### Implemented functions
 * Decode / encode pipeline using FFmpeg (through PyAV)
   * Reasonably optimised - only about 10% slower than using FFmpeg directly for a straight transcode with hardware encoding
-    * If you just want to do a straight transcode, I would recommend using FFmpeg instead.
-  * Supports hardware encoders (hardware decoders are not supported due to PyAV limitation, but software decoders are very fast anyways)
+    * For a straight transcode, use FFmpeg instead
+  * Supports hardware encoders
 
 ### Transforms
 * YUV to RGB and back, including chroma subsampling/supersampling
@@ -33,9 +33,24 @@ You can run benchmarks.py to see how fast things are, but it doesn't really have
 * 3D LUT application with trilinear filtering
 * Resizing with Lanczos interpolation (ok, this is really just a one line call to jax.image.resize())
 * Denoising using NL-Means (both pixelwise and blockwise variants implemented)
-  * ~50 fps at 4K on my NVIDIA RTX 3060 Ti, compared to ~2 fps with FFmpeg's CPU implementation (I wasn't able to get the OpenCL version to work)
+  * ~50 fps at 4K on NVIDIA RTX 3060 Ti, compared to ~2 fps with FFmpeg's CPU implementation
 
 ## Installation Instructions
+### Windows (no GPU-accelerated Jax or encoding)
+```
+# Install JaxVidFlow.
+pip install JaxVidFlow
+```
+
+### Mac
+```
+# Install JaxVidFlow.
+pip install JaxVidFlow
+
+# Optional: Install JAX with the experimental METAL backend.
+pip install jax-metal
+```
+
 ### Linux (Debian/Ubuntu) or Windows (with WSL2, in an Ubuntu VM)
 ```
 # Install dependencies.
@@ -48,7 +63,7 @@ python3 -m venv venv
 # Activate the virtual environment (optional).
 source venv/bin/activate
 
-# Install PyAV from source (this links against system ffmpeg libraries, which is necessary to get hardware-accelerated encoders).
+# Install PyAV from source (this links against system ffmpeg libraries, which is necessary to get hardware-accelerated decoders and encoders).
 pip3 install av --no-binary av
 
 # Install JAX (with NVIDIA GPU support).
@@ -59,34 +74,6 @@ pip3 install jax
 
 # See Jax documentation for installing JAX with experimental backends (eg. AMD ROCm):
 # https://jax.readthedocs.io/en/latest/installation.html
-```
-
-### Mac (with experimental JAX METAL support)
-```
-# Install homebrew (https://brew.sh/) and Python
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-brew install python3
-
-# Install ffmpeg.
-brew install ffmpeg pkg-config
-
-# Setup a virtual environment (optional).
-python3 -m venv venv
-
-# Activate the virtual environment (optional).
-source venv/bin/activate
-
-# Install PyAV from source (this links against system ffmpeg libraries, which is necessary to get hardware-accelerated encoders).
-pip3 install av --no-binary av
-
-# Install JAX with the experimental METAL backend.
-pip3 install jax-metal
-```
-
-### Common
-```
-# Install other dependencies.
-pip3 install tqdm pytest
 ```
 
 ## Acknowledgements
