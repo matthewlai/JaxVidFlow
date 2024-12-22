@@ -26,6 +26,8 @@ from jax import image as jax_image
 from jax import numpy as jnp
 import numpy as np
 
+sys.path.append('src')
+
 from JaxVidFlow import colourspaces, compat, lut, nlmeans, utils
 from JaxVidFlow.types import FT
 from JaxVidFlow.config import Config
@@ -53,9 +55,18 @@ _CODEC_PREFERENCES = [
 
 def _video_decode():
   start_time = time.time()
-  for i, _ in enumerate(VideoReader(filename='test_files/lionfish.mp4', scale_width=4096)):
+  hwaccel = None
+  if platform.system() == 'Darwin':
+    hwaccel = 'videotoolbox'
+  elif platform.system() == 'd3d11va':
+    hwaccel = 'd3d11va'
+  else:
+    print(f'Warning: automatic hwaccel determination not supported on Linux')
+  i = 0
+  for i, _ in enumerate(VideoReader(filename='test_files/lionfish.mp4', scale_width=1920, hwaccel=hwaccel)):
     if i > 100:
       break
+
   duration = time.time() - start_time
   print(f' {i} frames in {duration:.2f}s ({i / duration:.2f} fps, {duration / i * 1000:.2f}ms/frame)')
 
@@ -70,8 +81,9 @@ def _video_transcode_rgb():
                    pixfmt='yuv420p',
                    codec_name=codec_name,
                    codec_options=codec_options) as video_writer:
-    for i, frame_data in enumerate(video_reader):
+    for i, frame in enumerate(video_reader):
       if i == 0:
+        frame_data = frame.data
         frame_data.block_until_ready()
         start_time = time.time()
       video_writer.add_frame(frame=frame_data)

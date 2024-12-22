@@ -2,6 +2,7 @@ import fractions
 import os
 import platform
 import sys
+import time
 
 import jax
 from jax import numpy as jnp

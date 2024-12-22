@@ -46,18 +46,24 @@ class Frame:
 
 
 class VideoReader:
-  def __init__(self, filename: str, scale_width: int | None = None, scale_height: int | None = None):
-    self.in_container = av.open(filename)
+  def __init__(self, filename: str, scale_width: int | None = None, scale_height: int | None = None,
+               hwaccel: av.codec.hwaccel.HWAccel | str | None = None, jax_device: Any = None):
+    self._hwaccel = None
+    if isinstance(hwaccel, str):
+      self._hwaccel = av.codec.hwaccel.HWAccel(device_type=hwaccel)
+    elif isinstance(hwaccel, av.codec.hwaccel.HWAccel):
+      self._hwaccel = hwaccel
+
+    if jax_device is None:
+      jax_device = jax.devices()[0]
+    self._jax_device = jax_device
+
+    self.in_container = av.open(filename, hwaccel=self._hwaccel)
     self.in_video_stream = self.in_container.streams.video[0]
     self.in_audio_stream = self.in_container.streams.audio[0]
     self.demux = self.in_container.demux(video=0, audio=0)
     self._decoded_frames = queue.Queue()
     self._audio_packets = []
-
-    side_data = self.in_video_stream.side_data
-    self._rotation = 0
-    if 'DISPLAYMATRIX' in side_data:
-      self._rotation = side_data['DISPLAYMATRIX']
 
     logger.debug('Streams:')
     for i, stream in enumerate(self.in_container.streams):
@@ -155,20 +161,24 @@ class VideoReader:
 
     frame = self._next_frame()
 
-    frame = frame.reformat(width=self._width, height=self._height)
-
     # Reading from video planes directly saves an extra copy in VideoFrame.to_ndarray.
     # Planes should be in machine byte order, which should also be what frombuffer() expects.
     bits = 0
-    if frame.format.name in ('yuv420p', 'yuvj420p'):
+    if frame.format.name in ('yuv420p', 'yuvj420p', 'nv12'):
       bits = 8
+      format_to = 'yuv420p'
     elif frame.format.name in ('yuv420p10le'):
       bits = 10
+      format_to = 'yuv420p10le'
     else:
       raise RuntimeError(f'Unknwon frame format: {frame.format.name}')
     dtype = jnp.uint8 if bits == 8 else jnp.uint16
 
-    y, u, v = (jnp.frombuffer(frame.planes[i], dtype) for i in range(3))
+    # If we are scaling, we do it here using libav to minimise data transfer to the GPU. It's almost certainly not worth
+    # the bandwidth to do the scaling on GPU.
+    frame = frame.reformat(width=self._width, height=self._height, format=format_to)
+
+    y, u, v = (jax.device_put(jnp.frombuffer(frame.planes[i], dtype), device=self._jax_device) for i in range(3))
 
     width = self.width()
     height = self.height()
@@ -181,7 +191,7 @@ class VideoReader:
     return Frame(
         data=VideoReader.DecodeFrame((y, u, v), frame.format.name),
         frame_time=frame.time,
-        rotation=self._rotation)
+        rotation=frame.rotation)
 
   @staticmethod
   @functools.partial(jax.jit, static_argnames=['frame_format'])
