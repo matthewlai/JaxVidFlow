@@ -26,7 +26,7 @@ _MIN_SEEK_TIME = 2.0  # If we are seeking ahead by less than this amount, just k
 
 # How many frames to decode/convert ahead. Note that this is a suggestion. If we get a packet with a lot of frames, we have to
 # decode them all to avoid a deadlock trying to stop decoding threads.
-_MAX_FRAME_QUEUE_SIZE = 10
+_MAX_FRAME_QUEUE_SIZE = 4
 
 def undo_2x2subsample(x: jnp.ndarray) -> jnp.ndarray:
   # Undo subsampling (TODO: do this properly according to spec). Here we are assuming co-located with top left and
