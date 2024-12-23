@@ -168,7 +168,8 @@ class VideoReader:
     dtype = jnp.uint8 if bits == 8 else jnp.uint16
 
     # If we are scaling, we do it here using libav to minimise data transfer to the GPU. It's almost certainly not worth
-    # the bandwidth to do the scaling on GPU.
+    # the bandwidth to do the scaling on GPU. We do the conversion to RGB24 ourselves because we can do it faster than
+    # ffmpeg even on CPU. Much faster on GPU. We also do it in floating point which is more accurate.
     av_frame = av_frame.reformat(width=self._width, height=self._height, format=format_to)
 
     y, u, v = (jax.device_put(jnp.frombuffer(av_frame.planes[i], dtype), device=self._jax_device) for i in range(3))
