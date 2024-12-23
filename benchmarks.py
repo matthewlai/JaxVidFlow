@@ -63,7 +63,7 @@ def _video_decode():
   else:
     print(f'Warning: automatic hwaccel determination not supported on Linux')
   i = 0
-  for i, _ in enumerate(VideoReader(filename='test_files/lionfish.mp4', scale_width=1920, hwaccel=hwaccel)):
+  for i, _ in enumerate(VideoReader(filename='test_files/lionfish.mp4', hwaccel=hwaccel)):
     if i > 100:
       break
 
