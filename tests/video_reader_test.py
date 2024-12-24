@@ -38,3 +38,13 @@ def test_video_reader():
   reader.seek(20.0)
   frame = next(reader)
   assert frame.frame_time == pytest.approx(8.08, 0.1)
+
+def test_video_reader():
+  reader = video_reader.VideoReader('test_files/lionfish.mp4')
+  last_time = None
+  for i, frame in enumerate(reader):
+    expected_time = i * (1.0 / 25.0)
+    assert frame.frame_time == pytest.approx(expected_time, abs=0.05)
+    assert last_time is None or frame.frame_time >= last_time
+    last_time = frame.frame_time
+  assert last_time == pytest.approx(reader.duration(), abs=0.05)

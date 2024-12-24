@@ -50,6 +50,7 @@ class Frame:
   data: jnp.ndarray
   frame_time: float
   rotation: int
+  pts: int
 
 
 @dataclasses.dataclass(order=True)
@@ -118,8 +119,8 @@ class VideoReader:
     self._convert_executor = futures.ThreadPoolExecutor(max_workers=max_workers)
 
     # This holds futures for frame conversions. We have a priority queue because when seeking,
-    # we need to be able to put one frame back into the front of the queue, and we do that with
-    # priority 0. Normal decoded frames have priority 1.
+    # we need to be able to put one frame back into the front of the queue, and we do that by
+    # having frame PTS as the priority.
     self._converted_frames = queue.PriorityQueue()
 
     self._end_of_stream = threading.Event()
@@ -139,8 +140,8 @@ class VideoReader:
         self._audio_packets.put(packet)
       if packet.stream == self.in_video_stream:
         for av_frame in packet.decode():
-          frame_future = self._convert_executor.submit(VideoReader._convert_frame, self, av_frame)
-          self._converted_frames.put(PrioritizedEntry(priority=1, item=frame_future))
+          frame_future = self._convert_executor.submit(VideoReader._convert_frame, av_frame, self._width, self._height, self._jax_device)
+          self._converted_frames.put(PrioritizedEntry(priority=av_frame.pts, item=frame_future))
 
       # Schedule the next task. This will silently fail if the threadpool is getting shutdown (eg for seeking).
       # All other checks will happen when the task gets run, so we don't need to repeat them here.
@@ -153,14 +154,16 @@ class VideoReader:
       # We are shutting down.
       pass
 
-  def _convert_frame(self, av_frame) -> Frame:
+  @staticmethod
+  def _convert_frame(av_frame, width, height, jax_device) -> Frame:
+    # Note that this runs in a worker thread, so should not access self.
     # Reading from video planes directly saves an extra copy in VideoFrame.to_ndarray.
     # Planes should be in machine byte order, which should also be what frombuffer() expects.
     bits = 0
     if av_frame.format.name in ('yuv420p', 'yuvj420p', 'nv12'):
       bits = 8
       format_to = 'yuv420p'
-    elif av_frame.format.name in ('yuv420p10le'):
+    elif av_frame.format.name in ('yuv420p10le', 'p010le'):
       bits = 10
       format_to = 'yuv420p10le'
     else:
@@ -170,12 +173,10 @@ class VideoReader:
     # If we are scaling, we do it here using libav to minimise data transfer to the GPU. It's almost certainly not worth
     # the bandwidth to do the scaling on GPU. We do the conversion to RGB24 ourselves because we can do it faster than
     # ffmpeg even on CPU. Much faster on GPU. We also do it in floating point which is more accurate.
-    av_frame = av_frame.reformat(width=self._width, height=self._height, format=format_to)
+    av_frame = av_frame.reformat(width=width, height=height, format=format_to)
 
-    y, u, v = (jax.device_put(jnp.frombuffer(av_frame.planes[i], dtype), device=self._jax_device) for i in range(3))
+    y, u, v = (jax.device_put(jnp.frombuffer(av_frame.planes[i], dtype), device=jax_device) for i in range(3))
 
-    width = self.width()
-    height = self.height()
     y = jnp.reshape(y, (height, width))
     u = jnp.reshape(u, (height // 2, width // 2))
     v = jnp.reshape(v, (height // 2, width // 2))
@@ -183,13 +184,20 @@ class VideoReader:
     return Frame(
         data=VideoReader.ConvertToRGB((y, u, v), av_frame.format.name),
         frame_time=av_frame.time,
-        rotation=av_frame.rotation)
+        rotation=av_frame.rotation,
+        pts=av_frame.pts)
 
   def width(self) -> int:
     return self._width
 
   def height(self) -> int:
     return self._height
+
+  def set_width(self, width) -> None:
+    self._width = width
+
+  def set_height(self, height) -> None:
+    self._height = height
 
   def frame_rate(self) -> fractions.Fraction:
     return self.in_video_stream.guessed_rate
@@ -227,6 +235,10 @@ class VideoReader:
           break
 
       self.in_container.seek(offset=offset, stream=self.in_video_stream)
+
+      # After seeking we need to get a new demux because the last one may have already hit EOF and exited.
+      self.demux = self.in_container.demux(video=0, audio=0)
+      self._end_of_stream.clear()
       self._decode_executor = futures.ThreadPoolExecutor(max_workers=1)
       self._schedule_decode_task()
 
@@ -249,7 +261,7 @@ class VideoReader:
       # Here we put the last frame back.
       frame_future = futures.Future()
       frame_future.set_result(frame)
-      self._converted_frames.put(PrioritizedEntry(priority=0, item=frame_future))
+      self._converted_frames.put(PrioritizedEntry(priority=frame.pts, item=frame_future))
 
   def audio_packets(self) -> Sequence[Any]:
     ret = []
