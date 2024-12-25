@@ -51,6 +51,7 @@ class Frame:
   frame_time: float
   rotation: int
   pts: int
+  max_val: int | float
 
 
 @dataclasses.dataclass(order=True)
@@ -58,9 +59,9 @@ class PrioritizedEntry:
     priority: int
     item: Any = dataclasses.field(compare=False)
 
-def _jax_array_from_video_plane(plane, dtype) -> jnp.ndarray:
+def _jax_array_from_video_plane(plane, dtype, values_per_pixel: int = 1) -> jnp.ndarray:
   total_line_size = abs(plane.line_size)
-  bytes_per_pixel = jnp.dtype(dtype).itemsize
+  bytes_per_pixel = jnp.dtype(dtype).itemsize * values_per_pixel
   useful_line_size = plane.width * bytes_per_pixel
   arr = jnp.frombuffer(plane, jnp.uint8)
   if total_line_size != useful_line_size:
@@ -68,7 +69,7 @@ def _jax_array_from_video_plane(plane, dtype) -> jnp.ndarray:
   return arr.view(jnp.dtype(dtype))
 
 class VideoReader:
-  def __init__(self, filename: str, scale_width: int | None = None, scale_height: int | None = None,
+  def __init__(self, filename: str, scale_width: int | None = None, scale_height: int | None = None, to_scaled_float: bool = True,
                hwaccel: av.codec.hwaccel.HWAccel | str | None = None, jax_device: Any = None, max_workers: int | None = None):
     self._hwaccel = None
     if isinstance(hwaccel, str):
@@ -106,9 +107,7 @@ class VideoReader:
     self._width = self.in_video_stream.codec_context.width
     self._height = self.in_video_stream.codec_context.height
 
-    self._height, self._width = scale.calculate_new_dims(
-        old_width=self._width, old_height=self._height,
-        multiple_of=8, new_width=scale_width, new_height=scale_height)
+    self._to_scaled_float = to_scaled_float
 
     # Frame time of the last frame (that has been extracted from the decoded frames queue).
     self._last_frame_time = 0.0
@@ -151,7 +150,7 @@ class VideoReader:
       if packet.stream == self.in_video_stream:
         for av_frame in packet.decode():
           frame_future = self._convert_executor.submit(VideoReader._convert_frame, av_frame, self._width,
-                                                       self._height, self._jax_device, self._reformatter,
+                                                       self._height, self._to_scaled_float, self._jax_device, self._reformatter,
                                                        self._reformatter_mutex)
           self._converted_frames.put(PrioritizedEntry(priority=av_frame.pts, item=frame_future))
 
@@ -167,17 +166,17 @@ class VideoReader:
       pass
 
   @staticmethod
-  def _convert_frame(av_frame, width, height, jax_device, reformatter, reformatter_mutex) -> Frame:
+  def _convert_frame(av_frame, width, height, to_scaled_float, jax_device, reformatter, reformatter_mutex) -> Frame:
     # Note that this runs in a worker thread, so should not access self.
     # Reading from video planes directly saves an extra copy in VideoFrame.to_ndarray.
     # Planes should be in machine byte order, which should also be what frombuffer() expects.
     bits = 0
     if av_frame.format.name in ('yuv420p', 'yuvj420p', 'nv12'):
       bits = 8
-      format_to = 'yuv420p'
+      format_to = 'rgb24'
     elif av_frame.format.name in ('yuv420p10le', 'p010le'):
-      bits = 10
-      format_to = 'yuv420p10le'
+      bits = 16
+      format_to = 'rgb48le' if sys.byteorder == 'little' else 'rgb48be'
     else:
       raise RuntimeError(f'Unknwon frame format: {av_frame.format.name}')
     dtype = jnp.uint8 if bits == 8 else jnp.uint16
@@ -190,19 +189,22 @@ class VideoReader:
       av_frame = reformatter.reformat(av_frame, width=width, height=height, format=format_to,
                                       dst_color_range=av.video.reformatter.ColorRange.JPEG)
 
-    y, u, v = (jax.device_put(_jax_array_from_video_plane(av_frame.planes[i], dtype), device=jax_device) for i in range(3))
+    rgb = jax.device_put(_jax_array_from_video_plane(av_frame.planes[0], dtype, 3), device=jax_device)
 
-    y = jnp.reshape(y, (height, width))
-    u = jnp.reshape(u, (math.ceil(height / 2), math.ceil(width / 2)))
-    v = jnp.reshape(v, (math.ceil(height / 2), math.ceil(width / 2)))
+    rgb = rgb.reshape((height, width, -1))
 
-    rgb_data = VideoReader.ConvertToRGB((y, u, v), av_frame.format.name)
+    max_val = (2 ** bits - 1)
+
+    if to_scaled_float:
+      rgb = rgb.astype(jnp.float32) / max_val
+      max_val = 1.0
 
     return Frame(
-        data=rgb_data,
+        data=rgb,
         frame_time=av_frame.time,
         rotation=av_frame.rotation,
-        pts=av_frame.pts)
+        pts=av_frame.pts,
+        max_val=max_val)
 
   def width(self) -> int:
     return self._width
@@ -307,44 +309,5 @@ class VideoReader:
     frame = frame_future.result()
     self._last_frame_time = frame.frame_time
     self._schedule_decode_task()
+
     return frame
-
-  @staticmethod
-  @functools.partial(jax.jit, static_argnames=['frame_format'])
-  def ConvertToRGB(raw_frame: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray] | jnp.ndarray, frame_format: str) -> jnp.ndarray:
-    bits = 0
-    if frame_format in ('yuv420p', 'yuvj420p'):
-      bits = 8
-    elif frame_format in ('yuv420p10le'):
-      bits = 10
-    else:
-      raise RuntimeError(f'Unknwon frame format: {frame_format}')
-
-    y, u, v = raw_frame
-
-    max_val = 2 ** bits - 1
-    y = y.astype(FT()) / max_val
-    u = u.astype(FT()) / max_val
-    v = v.astype(FT()) / max_val
-
-    u = undo_2x2subsample(u)
-    v = undo_2x2subsample(v)
-
-    # U and V planes may be 1 pixel bigger than y in both directions, if y has odd width and/or height.
-    if u.shape[0] == (y.shape[0] + 1):
-      u = u[:-1, :]
-      v = v[:-1, :]
-    if u.shape[1] == (y.shape[1] + 1):
-      u = u[:, :-1]
-      v = v[:, :-1]
-
-    assert y.shape == u.shape and u.shape == v.shape, f'{y.shape} {u.shape} {v.shape}'
-
-    yuv = jnp.stack([y, u, v], axis=2)
-
-    # Do BT.709 conversion to RGB.
-    # https://en.wikipedia.org/wiki/YCbCr#ITU-R_BT.709_conversion
-
-    rgb = colourspaces.YUV2RGB(yuv)
-
-    return jnp.clip(rgb, min=0.0, max=1.0)

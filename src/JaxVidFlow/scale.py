@@ -27,6 +27,8 @@ def scale_image(img: jnp.ndarray, new_width: int | None = None, new_height: int 
   if new_width is None and new_height is None:
     raise ValueError('Either new_width or new_height must be set')
   old_height, old_width = img.shape[:2]
+  dtype = img.dtype
+  img = img.astype(jnp.float32)
   new_height, new_width = calculate_new_dims(old_width=old_width, old_height=old_height, multiple_of=multiple_of,
                                              new_width=new_width, new_height=new_height)
   # First, if we are downsampling in either dim, by a factor of 2 or more, we use reduce_window()
@@ -42,4 +44,4 @@ def scale_image(img: jnp.ndarray, new_width: int | None = None, new_height: int 
   if img.shape[:2] != (new_height, new_width):
     img = jax.image.resize(img, (new_height, new_width, img.shape[2]), method=filter_method)
   assert img.shape[:2] == (new_height, new_width)
-  return img
+  return img.astype(dtype)
