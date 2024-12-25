@@ -38,7 +38,8 @@ def scale_image(img: jnp.ndarray, new_width: int | None = None, new_height: int 
   # See https://en.wikipedia.org/wiki/Mipmap
   height_ds_factor = max(int(math.floor(old_height / new_height)), 1)
   width_ds_factor = max(int(math.floor(old_width / new_width)), 1)
-  if height_ds_factor >= 2 or width_ds_factor >= 2:
+  if (height_ds_factor >= 2 or width_ds_factor >= 2 and
+      img.shape[0] % height_ds_factor == 0 and img.shape[1] % width_ds_factor == 0):
     img = compat.window_reduce_mean(img, (height_ds_factor, width_ds_factor))
   # Now we do the filter-based stuff if necessary.
   if img.shape[:2] != (new_height, new_width):
