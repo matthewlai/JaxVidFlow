@@ -116,6 +116,8 @@ class VideoReader:
 
     self._decode_executor = futures.ThreadPoolExecutor(max_workers=1)
 
+    self._reformatter = av.video.reformatter.VideoReformatter()
+    self._reformatter_mutex = threading.Lock()
     self._convert_executor = futures.ThreadPoolExecutor(max_workers=max_workers)
 
     # This holds futures for frame conversions. We have a priority queue because when seeking,
@@ -140,7 +142,9 @@ class VideoReader:
         self._audio_packets.put(packet)
       if packet.stream == self.in_video_stream:
         for av_frame in packet.decode():
-          frame_future = self._convert_executor.submit(VideoReader._convert_frame, av_frame, self._width, self._height, self._jax_device)
+          frame_future = self._convert_executor.submit(VideoReader._convert_frame, av_frame, self._width,
+                                                       self._height, self._jax_device, self._reformatter,
+                                                       self._reformatter_mutex)
           self._converted_frames.put(PrioritizedEntry(priority=av_frame.pts, item=frame_future))
 
       # Schedule the next task. This will silently fail if the threadpool is getting shutdown (eg for seeking).
@@ -155,7 +159,7 @@ class VideoReader:
       pass
 
   @staticmethod
-  def _convert_frame(av_frame, width, height, jax_device) -> Frame:
+  def _convert_frame(av_frame, width, height, jax_device, reformatter, reformatter_mutex) -> Frame:
     # Note that this runs in a worker thread, so should not access self.
     # Reading from video planes directly saves an extra copy in VideoFrame.to_ndarray.
     # Planes should be in machine byte order, which should also be what frombuffer() expects.
@@ -173,7 +177,10 @@ class VideoReader:
     # If we are scaling, we do it here using libav to minimise data transfer to the GPU. It's almost certainly not worth
     # the bandwidth to do the scaling on GPU. We do the conversion to RGB24 ourselves because we can do it faster than
     # ffmpeg even on CPU. Much faster on GPU. We also do it in floating point which is more accurate.
-    av_frame = av_frame.reformat(width=width, height=height, format=format_to)
+    # Unfortunately it looks like swscale is not thread-safe?
+    with reformatter_mutex:
+      av_frame = reformatter.reformat(av_frame, width=width, height=height, format=format_to,
+                                      dst_color_range=av.video.reformatter.ColorRange.JPEG)
 
     y, u, v = (jax.device_put(jnp.frombuffer(av_frame.planes[i], dtype), device=jax_device) for i in range(3))
 
@@ -181,8 +188,10 @@ class VideoReader:
     u = jnp.reshape(u, (height // 2, width // 2))
     v = jnp.reshape(v, (height // 2, width // 2))
 
+    rgb_data = VideoReader.ConvertToRGB((y, u, v), av_frame.format.name)
+
     return Frame(
-        data=VideoReader.ConvertToRGB((y, u, v), av_frame.format.name),
+        data=rgb_data,
         frame_time=av_frame.time,
         rotation=av_frame.rotation,
         pts=av_frame.pts)
