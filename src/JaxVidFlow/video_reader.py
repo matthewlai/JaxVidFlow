@@ -58,6 +58,14 @@ class PrioritizedEntry:
     priority: int
     item: Any = dataclasses.field(compare=False)
 
+def _jax_array_from_video_plane(plane, dtype) -> jnp.ndarray:
+  total_line_size = abs(plane.line_size)
+  bytes_per_pixel = jnp.dtype(dtype).itemsize
+  useful_line_size = plane.width * bytes_per_pixel
+  arr = jnp.frombuffer(plane, jnp.uint8)
+  if total_line_size != useful_line_size:
+    arr = arr.reshape(-1, total_line_size)[:, 0:useful_line_size].reshape(-1)
+  return arr.view(jnp.dtype(dtype))
 
 class VideoReader:
   def __init__(self, filename: str, scale_width: int | None = None, scale_height: int | None = None,
@@ -182,11 +190,11 @@ class VideoReader:
       av_frame = reformatter.reformat(av_frame, width=width, height=height, format=format_to,
                                       dst_color_range=av.video.reformatter.ColorRange.JPEG)
 
-    y, u, v = (jax.device_put(jnp.frombuffer(av_frame.planes[i], dtype), device=jax_device) for i in range(3))
+    y, u, v = (jax.device_put(_jax_array_from_video_plane(av_frame.planes[i], dtype), device=jax_device) for i in range(3))
 
     y = jnp.reshape(y, (height, width))
-    u = jnp.reshape(u, (height // 2, width // 2))
-    v = jnp.reshape(v, (height // 2, width // 2))
+    u = jnp.reshape(u, (math.ceil(height / 2), math.ceil(width / 2)))
+    v = jnp.reshape(v, (math.ceil(height / 2), math.ceil(width / 2)))
 
     rgb_data = VideoReader.ConvertToRGB((y, u, v), av_frame.format.name)
 
@@ -322,7 +330,15 @@ class VideoReader:
     u = undo_2x2subsample(u)
     v = undo_2x2subsample(v)
 
-    assert y.shape == u.shape and u.shape == v.shape
+    # U and V planes may be 1 pixel bigger than y in both directions, if y has odd width and/or height.
+    if u.shape[0] == (y.shape[0] + 1):
+      u = u[:-1, :]
+      v = v[:-1, :]
+    if u.shape[1] == (y.shape[1] + 1):
+      u = u[:, :-1]
+      v = v[:, :-1]
+
+    assert y.shape == u.shape and u.shape == v.shape, f'{y.shape} {u.shape} {v.shape}'
 
     yuv = jnp.stack([y, u, v], axis=2)
 
