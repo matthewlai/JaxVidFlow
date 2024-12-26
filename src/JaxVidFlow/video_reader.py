@@ -149,10 +149,7 @@ class VideoReader:
         for av_frame in packet.decode():
           # The decoder reuses frames, so we have to copy all the data out here.
           try:
-            frame = VideoReader._convert_frame(
-              av_frame=av_frame, width=self._width, height=self._height, jax_device=self._jax_device,
-              reformatter=self._reformatter
-            )
+            frame = self._convert_frame(av_frame=av_frame)
             self._decoded_frames.put(PrioritizedEntry(priority=av_frame.pts, item=frame))
           except Exception as e:
             print(e)
@@ -168,23 +165,23 @@ class VideoReader:
       # We are shutting down.
       pass
 
-  @staticmethod
-  def _convert_frame(av_frame, width, height, jax_device, reformatter) -> Frame:
+  def _convert_frame(self, av_frame) -> Frame:
     max_val = 0
+    reformat_args = dict(width=self._width, height=self._height, dst_color_range=av.video.reformatter.ColorRange.JPEG)
     if av_frame.format.name in ('yuv420p', 'yuvj420p', 'nv12'):
-      av_frame = reformatter.reformat(av_frame, width=width, height=height, format='yuv420p')
+      av_frame = self._reformatter.reformat(av_frame, format='yuv420p', **reformat_args)
       dtype = jnp.uint8
       max_val = 2 ** 8 - 1
       assert len(av_frame.planes) == 3
       y, u, v = (_jax_array_from_video_plane(av_frame.planes[i], dtype) for i in range(3))
     elif av_frame.format.name in ('yuv420p10le'):
-      av_frame = reformatter.reformat(av_frame, width=width, height=height)
+      av_frame = self._reformatter.reformat(av_frame, **reformat_args)
       dtype = jnp.uint16
       max_val = 2 ** 10 - 1
       assert len(av_frame.planes) == 3
       y, u, v = (_jax_array_from_video_plane(av_frame.planes[i], dtype) for i in range(3))
     elif av_frame.format.name in ('yuv420p16le', 'p010le'):
-      av_frame = reformatter.reformat(av_frame, width=width, height=height, format='yuv420p16le')
+      av_frame = self._reformatter.reformat(av_frame, format='yuv420p16le', **reformat_args)
       dtype = jnp.uint16
       max_val = 2 ** 16 - 1
       assert len(av_frame.planes) == 3
@@ -192,19 +189,7 @@ class VideoReader:
     else:
       raise RuntimeError(f'Unknwon frame format: {av_frame.format.name}')
 
-    y, u, v = (jax.device_put(x, device=jax_device) for x in (y, u, v))
-
-    # If we are scaling, we do it here using libav to minimise data transfer to the GPU. It's almost certainly not worth
-    # the bandwidth to do the scaling on GPU. We do the conversion to RGB24 ourselves because we can do it faster than
-    # ffmpeg even on CPU. Much faster on GPU. We also do it in floating point which is more accurate.
-    # Unfortunately it looks like swscale is not thread-safe?
-    # with reformatter_mutex:
-    #   start = time.time()
-    #   print(av_frame.format.name)
-    #   # av_frame = reformatter.reformat(av_frame, width=width, height=height)
-    #   # av_frame = reformatter.reformat(av_frame, width=width, height=height, format=format_to,
-    #   #                                 dst_color_range=av.video.reformatter.ColorRange.JPEG)
-    #   print(f'Reformat took {time.time() - start}')
+    y, u, v = (jax.device_put(x, device=self._jax_device) for x in (y, u, v))
 
     width = av_frame.width
     height = av_frame.height
