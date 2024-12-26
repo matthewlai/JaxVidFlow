@@ -41,8 +41,8 @@ def undo_2x2subsample(x: jnp.ndarray) -> jnp.ndarray:
 
   # Approach 2 (just duplicate pixels - fast but not very good!):
   width, height = x.shape[-1] * 2, x.shape[-2] * 2
-  x = jnp.repeat(x, repeats=2, axis=len(x.shape) - 1, total_repeat_length=width)
-  x = jnp.repeat(x, repeats=2, axis=len(x.shape) - 2, total_repeat_length=height)
+  x = jnp.repeat(x, repeats=2, axis=len(x.shape) - 1)
+  x = jnp.repeat(x, repeats=2, axis=len(x.shape) - 2)
   return x
 
 
