@@ -36,11 +36,12 @@ def scale_image(img: jnp.ndarray, new_width: int | None = None, new_height: int 
   # very fast, and also prevents aliasing when doing a large ratio downsample using a filter, where
   # each output pixel only depends on non-contiguous sets of input pixels.
   # See https://en.wikipedia.org/wiki/Mipmap
-  height_ds_factor = max(int(math.floor(old_height / new_height)), 1)
-  width_ds_factor = max(int(math.floor(old_width / new_width)), 1)
-  if (height_ds_factor >= 2 or width_ds_factor >= 2 and
-      img.shape[0] % height_ds_factor == 0 and img.shape[1] % width_ds_factor == 0):
-    img = compat.window_reduce_mean(img, (height_ds_factor, width_ds_factor))
+  while img.shape[0] / new_height >= 2 and img.shape[1] / new_width >= 2:
+    padding_h = 0 if img.shape[0] % 2 == 0 else 1
+    padding_w = 0 if img.shape[1] % 2 == 0 else 1
+    img = jnp.pad(img, pad_width=((0, padding_h), (0, padding_w), (0, 0)), mode='edge')
+    img = compat.window_reduce_mean(img, (2, 2))
+
   # Now we do the filter-based stuff if necessary.
   if img.shape[:2] != (new_height, new_width):
     img = jax.image.resize(img, (new_height, new_width, img.shape[2]), method=filter_method)
