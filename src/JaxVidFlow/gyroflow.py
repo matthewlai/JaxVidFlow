@@ -166,20 +166,26 @@ class Gyroflow:
     self._last_frame = None
     self._last_frame_time = None
 
+    # This is the width and height the plugin instance has been constructed for.
+    # We need to re-construct if our required image dimensions change.
+    self._instance_width, self._instance_height = None, None
+
   def _find_param_index(self, name) -> int:
     for i, (param_name, _) in enumerate(self._param_infos):
       if param_name == name:
         return i
     raise ValueError(f'Unknown param: {name}')
 
-  def process_frame(self, frame: jnp.ndarray | None, frame_time: float | None, rotation: int) -> jnp.ndarray | None:
+  def process_frame(self, frame: jnp.ndarray | None, frame_time: float | None, rotation: int, delay_one_frame: bool = True) -> jnp.ndarray | None:
     if frame is not None:
       assert frame.shape[2] == 4 and frame.dtype == jnp.uint8, 'Gyroflow expects RGBA packed. Use gyroflow.to_gyroflow()/from_gyroflow() to convert.'
       assert frame_time is not None
 
-    if self._instance is None:
+    height, width = frame.shape[:2]
+    if self._instance is None or self._instance_height != height or self._instance_width != width:
       assert frame is not None
-      height, width = frame.shape[:2]
+      if self._instance is not None:
+        self._lib.f0r_destruct(self._instance)
       self._instance = self._lib.f0r_construct(width, height)
       path_bytes = self._project_path.encode('utf-8')
       ArgType = ctypes.c_char_p * 1
@@ -189,6 +195,10 @@ class Gyroflow:
       self._lib.f0r_set_param_value(self._instance, arg, self._find_param_index('Project'))
 
     ret = None
+
+    if not delay_one_frame:
+      self._last_frame = frame
+      self._last_frame_time = frame_time
 
     if self._last_frame is not None:
       height, width = self._last_frame.shape[:2]
