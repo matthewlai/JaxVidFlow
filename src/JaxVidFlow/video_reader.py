@@ -27,7 +27,7 @@ _MIN_SEEK_TIME = 2.0  # If we are seeking ahead by less than this amount, just k
 
 # How many frames to decode/convert ahead. Note that this is a suggestion. If we get a packet with a lot of frames, we have to
 # decode them all to avoid a deadlock trying to stop decoding threads.
-_MAX_FRAME_QUEUE_SIZE = 4
+_MAX_FRAME_QUEUE_SIZE = 2
 
 def undo_2x2subsample(x: jnp.ndarray) -> jnp.ndarray:
   # Undo subsampling (TODO: do this properly according to spec). Here we are assuming co-located with top left and
@@ -81,6 +81,8 @@ class VideoReader:
     if jax_device is None:
       jax_device = jax.devices()[0]
     self._jax_device = jax_device
+
+    self._filename = filename
 
     self.in_container = av.open(filename, hwaccel=self._hwaccel)
     self.in_video_stream = self.in_container.streams.video[0]
@@ -206,6 +208,9 @@ class VideoReader:
         pts=av_frame.pts,
         max_val=1.0)
 
+  def filename(self) -> str:
+    return self._filename
+
   def width(self) -> int:
     return self._width
 
@@ -292,7 +297,7 @@ class VideoReader:
   def __iter__(self):
     return self
 
-  def __next__(self) -> tuple[jnp.ndarray, float]:
+  def __next__(self) -> tuple[Frame, float]:
     """This returns a frame in normalized RGB and frame time."""
     frame = None
 
@@ -306,6 +311,14 @@ class VideoReader:
 
     self._last_frame_time = frame.frame_time
     self._schedule_decode_task()
+
+    # Normally the frame will have already been scaled to the right dims, but that may not
+    # be the case if the width and height have been changed while some frames have already
+    # been decoded and queued up.
+    if frame.data.shape[0] != self._height or frame.data.shape[1] != self._width:
+      scaled_frame = scale.scale_image(
+        frame.data, new_width=self._width, new_height=self._height, multiple_of=1)
+      dataclasses.replace(frame, data=scaled_frame)
 
     return frame
 
