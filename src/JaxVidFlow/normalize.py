@@ -33,8 +33,8 @@ def normalize(img: jnp.ndarray, last_frame_mins: jnp.ndarray | None, last_frame_
     w_mod_win = img.shape[1] % downsample_win
     h_padding = 0 if h_mod_win == 0 else (downsample_win - h_mod_win)
     w_padding = 0 if w_mod_win == 0 else (downsample_win - w_mod_win)
-    img = jnp.pad(img, ((0, h_padding), (0, w_padding), (0, 0)), mode='edge')
-    img_ds = compat.window_reduce_mean(img, (downsample_win, downsample_win))
+    img_ds = jnp.pad(img, ((0, h_padding), (0, w_padding), (0, 0)), mode='edge')
+    img_ds = compat.window_reduce_mean(img_ds, (downsample_win, downsample_win))
   else:
     img_ds = img
   quantiles = jnp.quantile(img_ds, jnp.array([quantile_low, quantile_high], dtype=jnp.float32), axis=(0, 1))
