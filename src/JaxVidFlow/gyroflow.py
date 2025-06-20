@@ -187,6 +187,8 @@ class Gyroflow:
       if self._instance is not None:
         self._lib.f0r_destruct(self._instance)
       self._instance = self._lib.f0r_construct(width, height)
+      self._instance_height = height
+      self._instance_width = width
       path_bytes = self._project_path.encode('utf-8')
       ArgType = ctypes.c_char_p * 1
       arg = ArgType()
