@@ -9,7 +9,7 @@ import numpy as np
 
 sys.path.append('.')
 
-from JaxVidFlow import colourspaces, compat, utils
+from JaxVidFlow import colourspaces, compat
 
 class VideoWriter:
   # Note: Target bitrate is usually overridden by codec-specific constant quality control. One
