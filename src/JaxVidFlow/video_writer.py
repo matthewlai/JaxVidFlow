@@ -69,7 +69,7 @@ class VideoWriter:
 
   def write_audio_packets(self, audio_packets, in_audio_stream):
     if not self.out_audio_stream:
-      self.out_audio_stream = self.out_container.add_stream(template=in_audio_stream)
+      self.out_audio_stream = self.out_container.add_stream_from_template(in_audio_stream)
     for packet in audio_packets:
       packet.stream = self.out_audio_stream
       self.out_container.mux(packet)
