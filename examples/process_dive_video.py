@@ -146,8 +146,6 @@ def process_video(input_path: str, output_path: str, codec_name, codec_options, 
         comparison_video_writer.write_audio_packets(audio_packets=video_reader.audio_packets(),
                                                     in_audio_stream=video_reader.audio_stream())
 
-      video_reader.clear_audio_packets()
-
   if comparison_video_writer:
     comparison_video_writer.close()
 
