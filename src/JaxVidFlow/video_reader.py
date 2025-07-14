@@ -86,8 +86,8 @@ class VideoReader:
 
     self.in_container = av.open(filename, hwaccel=self._hwaccel)
     self.in_video_stream = self.in_container.streams.video[0]
-    self.in_audio_stream = self.in_container.streams.audio[0]
-    self.demux = self.in_container.demux(video=0, audio=0)
+    self.in_audio_stream = self.in_container.streams.audio[0] if self.in_container.streams.audio else None
+    self.demux = self.in_container.demux(video=0, audio=0) if self.in_audio_stream else self.in_container.demux(video=0)
 
     logger.debug('Streams:')
     for i, stream in enumerate(self.in_container.streams):
