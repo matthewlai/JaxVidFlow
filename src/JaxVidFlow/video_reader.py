@@ -7,7 +7,6 @@ import logging
 import math
 import queue
 import sys
-import time
 import threading
 from typing import Any, Sequence
 
@@ -27,7 +26,7 @@ _MIN_SEEK_TIME = 2.0  # If we are seeking ahead by less than this amount, just k
 
 # How many frames to decode/convert ahead. Note that this is a suggestion. If we get a packet with a lot of frames, we have to
 # decode them all to avoid a deadlock trying to stop decoding threads.
-_MAX_FRAME_QUEUE_SIZE = 2
+_MAX_FRAME_QUEUE_SIZE = 4
 
 def undo_2x2subsample(x: jnp.ndarray) -> jnp.ndarray:
   # Undo subsampling (TODO: do this properly according to spec). Here we are assuming co-located with top left and
@@ -41,8 +40,8 @@ def undo_2x2subsample(x: jnp.ndarray) -> jnp.ndarray:
 
   # Approach 2 (just duplicate pixels - fast but not very good!):
   width, height = x.shape[-1] * 2, x.shape[-2] * 2
-  x = jnp.repeat(x, repeats=2, axis=len(x.shape) - 1)
-  x = jnp.repeat(x, repeats=2, axis=len(x.shape) - 2)
+  x = jnp.repeat(x, repeats=2, axis=len(x.shape) - 1, total_repeat_length=width)
+  x = jnp.repeat(x, repeats=2, axis=len(x.shape) - 2, total_repeat_length=height)
   return x
 
 
@@ -52,7 +51,7 @@ class Frame:
   frame_time: float
   rotation: int
   pts: int
-  max_val: int | float
+  max_val: float = 1.0
 
 
 @dataclasses.dataclass(order=True)
@@ -60,18 +59,11 @@ class PrioritizedEntry:
     priority: int
     item: Any = dataclasses.field(compare=False)
 
-def _jax_array_from_video_plane(plane, dtype, values_per_pixel: int = 1) -> jnp.ndarray:
-  total_line_size = abs(plane.line_size)
-  bytes_per_pixel = jnp.dtype(dtype).itemsize * values_per_pixel
-  useful_line_size = plane.width * bytes_per_pixel
-  arr = jnp.frombuffer(plane, jnp.uint8)
-  if total_line_size != useful_line_size:
-    arr = arr.reshape(-1, total_line_size)[:, 0:useful_line_size].reshape(-1)
-  return arr.view(jnp.dtype(dtype))
 
 class VideoReader:
   def __init__(self, filename: str, scale_width: int | None = None, scale_height: int | None = None,
                hwaccel: av.codec.hwaccel.HWAccel | str | None = None, jax_device: Any = None, max_workers: int | None = None):
+    self._filename = filename
     self._hwaccel = None
     if isinstance(hwaccel, str):
       self._hwaccel = av.codec.hwaccel.HWAccel(device_type=hwaccel)
@@ -82,12 +74,10 @@ class VideoReader:
       jax_device = jax.devices()[0]
     self._jax_device = jax_device
 
-    self._filename = filename
-
     self.in_container = av.open(filename, hwaccel=self._hwaccel)
     self.in_video_stream = self.in_container.streams.video[0]
-    self.in_audio_stream = self.in_container.streams.audio[0] if self.in_container.streams.audio else None
-    self.demux = self.in_container.demux(video=0, audio=0) if self.in_audio_stream else self.in_container.demux(video=0)
+    self.in_audio_stream = self.in_container.streams.audio[0]
+    self.demux = self.in_container.demux(video=0, audio=0)
 
     logger.debug('Streams:')
     for i, stream in enumerate(self.in_container.streams):
@@ -99,7 +89,7 @@ class VideoReader:
       if isinstance(stream, av.audio.stream.AudioStream):
         codec_context = stream.codec_context
         logger.debug(f'    {stream.codec.name} {codec_context.sample_rate}Hz {codec_context.layout.name}')
-      if isinstance(stream, av.data.stream.DataStream):
+      if isinstance(stream, av.stream.DataStream):
         codec_context = stream.codec_context
         logger.debug(f'    {stream.name}')
         # We don't know how to copy data streams.
@@ -109,6 +99,10 @@ class VideoReader:
 
     self._width = self.in_video_stream.codec_context.width
     self._height = self.in_video_stream.codec_context.height
+
+    self._height, self._width = scale.calculate_new_dims(
+        old_width=self._width, old_height=self._height,
+        multiple_of=8, new_width=scale_width, new_height=scale_height)
 
     # Frame time of the last frame (that has been extracted from the decoded frames queue).
     self._last_frame_time = 0.0
@@ -124,12 +118,12 @@ class VideoReader:
 
     self._decode_executor = futures.ThreadPoolExecutor(max_workers=1)
 
-    self._reformatter = av.video.reformatter.VideoReformatter()
+    self._convert_executor = futures.ThreadPoolExecutor(max_workers=max_workers)
 
     # This holds futures for frame conversions. We have a priority queue because when seeking,
     # we need to be able to put one frame back into the front of the queue, and we do that by
     # having frame PTS as the priority.
-    self._decoded_frames = queue.PriorityQueue()
+    self._converted_frames = queue.PriorityQueue()
 
     self._end_of_stream = threading.Event()
 
@@ -138,7 +132,7 @@ class VideoReader:
     self._schedule_decode_task()
 
   def _check_and_decode_packet(self):
-    if self._decoded_frames.qsize() < _MAX_FRAME_QUEUE_SIZE and not self._end_of_stream.is_set():
+    if self._converted_frames.qsize() < _MAX_FRAME_QUEUE_SIZE and not self._end_of_stream.is_set():
       try:
         packet = next(self.demux)
       except StopIteration:
@@ -147,14 +141,9 @@ class VideoReader:
       if packet.stream == self.in_audio_stream and packet.dts is not None:
         self._audio_packets.put(packet)
       if packet.stream == self.in_video_stream:
-        start = time.time()
         for av_frame in packet.decode():
-          # The decoder reuses frames, so we have to copy all the data out here.
-          try:
-            frame = self._convert_frame(av_frame=av_frame)
-            self._decoded_frames.put(PrioritizedEntry(priority=av_frame.pts, item=frame))
-          except Exception as e:
-            print(e)
+          frame_future = self._convert_executor.submit(VideoReader._convert_frame, av_frame, self._width, self._height, self._jax_device)
+          self._converted_frames.put(PrioritizedEntry(priority=av_frame.pts, item=frame_future))
 
       # Schedule the next task. This will silently fail if the threadpool is getting shutdown (eg for seeking).
       # All other checks will happen when the task gets run, so we don't need to repeat them here.
@@ -167,42 +156,39 @@ class VideoReader:
       # We are shutting down.
       pass
 
-  def _convert_frame(self, av_frame) -> Frame:
-    max_val = 0
-    reformat_args = dict(width=self._width, height=self._height, dst_color_range=av.video.reformatter.ColorRange.JPEG)
+  @staticmethod
+  def _convert_frame(av_frame, width, height, jax_device) -> Frame:
+    # Note that this runs in a worker thread, so should not access self.
+    # Reading from video planes directly saves an extra copy in VideoFrame.to_ndarray.
+    # Planes should be in machine byte order, which should also be what frombuffer() expects.
+    bits = 0
     if av_frame.format.name in ('yuv420p', 'yuvj420p', 'nv12'):
-      av_frame = self._reformatter.reformat(av_frame, format='yuv420p', **reformat_args)
-      dtype = jnp.uint8
-      max_val = 2 ** 8 - 1
-      assert len(av_frame.planes) == 3
-      y, u, v = (_jax_array_from_video_plane(av_frame.planes[i], dtype) for i in range(3))
-    elif av_frame.format.name in ('yuv420p10le'):
-      av_frame = self._reformatter.reformat(av_frame, **reformat_args)
-      dtype = jnp.uint16
-      max_val = 2 ** 10 - 1
-      assert len(av_frame.planes) == 3
-      y, u, v = (_jax_array_from_video_plane(av_frame.planes[i], dtype) for i in range(3))
-    elif av_frame.format.name in ('yuv420p16le', 'p010le'):
-      av_frame = self._reformatter.reformat(av_frame, format='yuv420p16le', **reformat_args)
-      dtype = jnp.uint16
-      max_val = 2 ** 16 - 1
-      assert len(av_frame.planes) == 3
-      y, u, v = (_jax_array_from_video_plane(av_frame.planes[i], dtype) for i in range(3))
+      bits = 8
+      format_to = 'yuv420p'
+    elif av_frame.format.name in ('yuv420p10le', 'p010le'):
+      bits = 10
+      format_to = 'yuv420p10le'
     else:
       raise RuntimeError(f'Unknwon frame format: {av_frame.format.name}')
+    dtype = jnp.uint8 if bits == 8 else jnp.uint16
 
-    y, u, v = (jax.device_put(x, device=self._jax_device) for x in (y, u, v))
+    # If we are scaling, we do it here using libav to minimise data transfer to the GPU. It's almost certainly not worth
+    # the bandwidth to do the scaling on GPU. We do the conversion to RGB24 ourselves because we can do it faster than
+    # ffmpeg even on CPU. Much faster on GPU. We also do it in floating point which is more accurate.
+    av_frame = av_frame.reformat(width=width, height=height, format=format_to)
 
-    width = av_frame.width
-    height = av_frame.height
-    y = jnp.reshape(y, (height, width))
-    u = jnp.reshape(u, (math.ceil(height / 2), math.ceil(width / 2)))
-    v = jnp.reshape(v, (math.ceil(height / 2), math.ceil(width / 2)))
+    def get_plane(plane_idx, w, h):
+      plane = av_frame.planes[plane_idx]
+      stride = plane.line_size // (2 if bits > 8 else 1)
+      data = jnp.frombuffer(plane, dtype)
+      return jax.device_put(data.reshape(h, stride)[:, :w], device=jax_device)
 
-    rgb_data = VideoReader.ConvertToRGB((y, u, v), max_val)
+    y = get_plane(0, width, height)
+    u = get_plane(1, width // 2, height // 2)
+    v = get_plane(2, width // 2, height // 2)
 
     return Frame(
-        data=rgb_data,
+        data=VideoReader.ConvertToRGB((y, u, v), av_frame.format.name),
         frame_time=av_frame.time,
         rotation=av_frame.rotation,
         pts=av_frame.pts,
@@ -248,7 +234,7 @@ class VideoReader:
       self._decode_executor.shutdown(cancel_futures=True)
       while True:
         try:
-          self._decoded_frames.get(block=False)
+          self._converted_frames.get(block=False)
         except queue.Empty:
           break
 
@@ -283,7 +269,9 @@ class VideoReader:
     else:
       self._end_of_stream.clear()
       # Here we put the last frame back.
-      self._decoded_frames.put(PrioritizedEntry(priority=frame.pts, item=frame))
+      frame_future = futures.Future()
+      frame_future.set_result(frame)
+      self._converted_frames.put(PrioritizedEntry(priority=frame.pts, item=frame_future))
 
   def audio_packets(self) -> Sequence[Any]:
     ret = []
@@ -297,51 +285,51 @@ class VideoReader:
   def __iter__(self):
     return self
 
-  def __next__(self) -> tuple[Frame, float]:
+  def __next__(self) -> tuple[jnp.ndarray, float]:
     """This returns a frame in normalized RGB and frame time."""
-    frame = None
+    frame_future = None
 
-    while frame is None:
+    while frame_future is None:
       try:
-        prioritized_item = self._decoded_frames.get(timeout=0.1)
-        frame = prioritized_item.item
+        prioritized_item = self._converted_frames.get(timeout=0.1)
+        frame_future = prioritized_item.item
       except queue.Empty:
         if self._end_of_stream.is_set():
           raise StopIteration()
 
+    frame = frame_future.result()
     self._last_frame_time = frame.frame_time
     self._schedule_decode_task()
-
-    # Normally the frame will have already been scaled to the right dims, but that may not
-    # be the case if the width and height have been changed while some frames have already
-    # been decoded and queued up.
-    if frame.data.shape[0] != self._height or frame.data.shape[1] != self._width:
-      scaled_frame = scale.scale_image(
-        frame.data, new_width=self._width, new_height=self._height, multiple_of=1)
-      dataclasses.replace(frame, data=scaled_frame)
-
     return frame
 
   @staticmethod
-  @functools.partial(jax.jit, static_argnames=['max_val'])
-  def ConvertToRGB(raw_frame: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray] | jnp.ndarray, max_val: int) -> jnp.ndarray:
+  @functools.partial(jax.jit, static_argnames=['frame_format'])
+  def ConvertToRGB(raw_frame: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray] | jnp.ndarray, frame_format: str) -> jnp.ndarray:
+    bits = 0
+    if frame_format in ('yuv420p', 'yuvj420p'):
+      bits = 8
+    elif frame_format in ('yuv420p10le'):
+      bits = 10
+    else:
+      raise RuntimeError(f'Unknwon frame format: {frame_format}')
+
     y, u, v = raw_frame
-    dtype = y.dtype
+
+    max_val = 2 ** bits - 1
     y = y.astype(FT()) / max_val
     u = u.astype(FT()) / max_val
     v = v.astype(FT()) / max_val
+
     u = undo_2x2subsample(u)
     v = undo_2x2subsample(v)
-    # U and V planes may be 1 pixel bigger than y in both directions, if y has odd width and/or height.
-    if u.shape[0] == (y.shape[0] + 1):
-      u = u[:-1, :]
-      v = v[:-1, :]
-    if u.shape[1] == (y.shape[1] + 1):
-      u = u[:, :-1]
-      v = v[:, :-1]
-    assert y.shape == u.shape and u.shape == v.shape, f'{y.shape} {u.shape} {v.shape}'
+
+    assert y.shape == u.shape and u.shape == v.shape
+
     yuv = jnp.stack([y, u, v], axis=2)
+
     # Do BT.709 conversion to RGB.
     # https://en.wikipedia.org/wiki/YCbCr#ITU-R_BT.709_conversion
+
     rgb = colourspaces.YUV2RGB(yuv)
-    return rgb
+
+    return jnp.clip(rgb, min=0.0, max=1.0)
